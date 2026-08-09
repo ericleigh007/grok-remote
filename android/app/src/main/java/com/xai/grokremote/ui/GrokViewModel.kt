@@ -229,19 +229,41 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectVoice(name: String) {
         prefs.ttsVoiceName = name
-        speech.setVoice(name)
+        prefs.ttsEnabled = true
+        val ok = speech.setVoice(name)
         _state.update {
             it.copy(
                 selectedVoiceName = name,
                 ttsEnabled = true,
+                // Refresh labels after engine settles
+                ttsVoices = speech.listVoiceOptions().ifEmpty { it.ttsVoices },
+                errorBanner = if (!ok) {
+                    "Voice not applied by the TTS engine — try an On-device voice, or install Google speech data"
+                } else {
+                    null
+                },
             )
         }
-        prefs.ttsEnabled = true
-        speech.previewVoice(name)
+        if (ok) {
+            // previewVoice re-applies + delays speak so Google TTS picks up the change
+            speech.previewVoice(name)
+        }
     }
 
     fun previewSelectedVoice() {
-        speech.previewVoice(_state.value.selectedVoiceName)
+        val name = _state.value.selectedVoiceName
+        if (name.isNullOrBlank()) {
+            _state.update { it.copy(errorBanner = "Pick a voice first") }
+            return
+        }
+        // Re-apply then preview so we don't speak with a stale engine voice
+        if (!speech.setVoice(name)) {
+            _state.update {
+                it.copy(errorBanner = "Could not switch voice — engine rejected it")
+            }
+            return
+        }
+        speech.previewVoice(name)
     }
 
     fun toggleMic() {

@@ -15,27 +15,18 @@ Nothing here patches or reimplements Grok. If it works in the desktop agent, it 
 ## Screenshots
 
 <p align="center">
-  <img src="docs/images/android-chat.jpg" alt="Grok Remote Android app — chat, sessions, and streaming reply" width="260" />
+  <img src="docs/images/android-chat.jpg" alt="Grok Remote Android app — chat, sessions, and streaming reply" width="240" />
   &nbsp;
-  <img src="docs/images/android-pair.jpg" alt="Android in-app QR pairing screen" width="260" />
+  <img src="docs/images/android-pair.jpg" alt="Android in-app QR pairing screen" width="240" />
   &nbsp;
-  <img src="docs/images/pc-pair.png" alt="PC /pair page — loopback-only QR pairing (QR hidden in this capture)" width="360" />
+  <img src="docs/images/android-voice.jpg" alt="Android TTS voice picker with readable labels and preview" width="240" />
+  &nbsp;
+  <img src="docs/images/pc-pair.png" alt="PC /pair page — loopback-only QR pairing (QR hidden in this capture)" width="320" />
 </p>
 
 <p align="center">
-  <em>Left:</em> Android chat (sessions, composer, midstream interrupt)
-  &nbsp;·&nbsp;
-  <em>Center:</em> In-app QR pair screen
-  &nbsp;·&nbsp;
-  <em>Right:</em> PC <code>/pair</code> page (loopback-only; QR redacted)
+  <em>Chat</em> · <em>In-app pair</em> · <em>TTS voice picker</em> · <em>PC <code>/pair</code></em> (loopback-only; QR redacted)
 </p>
-
-<!-- Optional future shots — drop files in docs/images/ and uncomment:
-<p align="center">
-  <img src="docs/images/android-thinking.png" alt="Thinking panel" width="280" />
-  <img src="docs/images/android-voice.png" alt="TTS voice picker" width="280" />
-</p>
--->
 
 ---
 
@@ -60,7 +51,7 @@ Grok Remote is that remote: a small PC bridge + Android app (and a web fallback)
 | **Scheduled tasks** | Agent + bridge survive logon; not tied to a terminal window |
 | **`/pair` on the PC** | Loopback-only QR page; phone never fetches the secret URL as a page |
 | **QR login on Android** | Scan once; token stored in encrypted prefs |
-| **APK over the bridge** | ` /download ` serves the latest debug APK — no USB dance for updates |
+| **APK over the bridge** | PC `/pair` **Install** QR or phone `/dl` — no USB dance for updates |
 | **Multi-session** | Resume real Grok sessions (Flow, doorbell, …) with recent history in the UI |
 | **TUI-shaped stream** | Thinking, tools, markdown replies, cancel + midstream interrupt |
 | **STT / TTS** | System speech recognizer + system TTS with **voice picker** |
@@ -265,14 +256,17 @@ $env:JAVA_HOME = "C:\Program Files\Android\openjdk\jdk-21.0.8"   # or your JDK 1
 powershell -ExecutionPolicy Bypass -File .\scripts\publish-apk.ps1
 ```
 
-Then on the phone (Tailscale on), open Chrome:
+**Easiest:** on the PC open `http://127.0.0.1:8787/pair` and scan the **Install APK** QR
+(phone needs Tailscale on — no typing).
+
+Or open the short path on the phone:
 
 ```text
-https://YOUR-PC.YOUR-TAILNET.ts.net/download
+https://YOUR-PC.YOUR-TAILNET.ts.net/dl
 ```
 
 Tap **Download APK**, allow install from the browser, update.  
-Direct file: `/download/grok-remote.apk`.
+Aliases: `/dl` ≡ `/download`, `/dl/apk` ≡ `/download/grok-remote.apk`.
 
 USB still works if you prefer:
 
@@ -288,7 +282,7 @@ adb install -r android\app\build\outputs\apk\debug\app-debug.apk
 2. Phone: Tailscale **Connected**.  
 3. Open the app (or HTTPS bookmark).  
 4. Switch sessions, chat, expand thinking, watch tools, cancel or inject midstream.  
-5. After you ship a new APK: `publish-apk.ps1` → phone `/download` → install.
+5. After you ship a new APK: `publish-apk.ps1` → PC `/pair` **Install** QR (or phone `/dl`) → install.
 
 ---
 
@@ -297,10 +291,13 @@ adb install -r android\app\build\outputs\apk\debug\app-debug.apk
 | Path | Purpose |
 |------|---------|
 | `/` | Web chat UI |
-| `/pair` | **PC loopback only** — QR pairing |
-| `/pair/qr.png` | QR image (loopback only) |
-| `/download` | Install page for the Android APK |
-| `/download/grok-remote.apk` | APK file |
+| `/pair` | **PC loopback only** — pair QR + install QR |
+| `/pair/qr.png` | Pairing QR (loopback only) |
+| `/pair/dl-qr.png` | Install-page QR (loopback only) |
+| `/dl` | Short install page for the Android APK |
+| `/dl/apk` | Short APK file URL |
+| `/download` | Alias of `/dl` |
+| `/download/grok-remote.apk` | Alias of `/dl/apk` |
 | `/ws?token=…` | App / web realtime channel |
 | `/api/health` | Liveness (`agentAlive`, transport, sessions) |
 

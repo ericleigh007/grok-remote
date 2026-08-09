@@ -13,7 +13,15 @@ $Releases = Join-Path $Root "releases"
 $ApkDst = Join-Path $Releases "grok-remote-debug.apk"
 $Meta = Join-Path $Releases "latest.json"
 
-$env:JAVA_HOME = if ($env:JAVA_HOME) { $env:JAVA_HOME } else { "C:\Program Files\Android\openjdk\jdk-21.0.8" }
+$jdkCandidates = @(
+  $env:JAVA_HOME,
+  "C:\Users\ericl\.jdks\ms-21.0.9",
+  "C:\Program Files\Android\openjdk\jdk-21.0.8",
+  "C:\Program Files\Android\openjdk\jdk-17.0.14",
+  "C:\Program Files\Microsoft\jdk-17.0.16.8-hotspot"
+) | Where-Object { $_ -and (Test-Path $_) }
+if (-not $jdkCandidates) { throw "No JDK 17+ found. Set JAVA_HOME or install a JDK." }
+$env:JAVA_HOME = $jdkCandidates[0]
 $env:ANDROID_HOME = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA "Android\Sdk" }
 $env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:Path"
 
@@ -29,7 +37,7 @@ if (-not $SkipBuild) {
 }
 
 if (-not (Test-Path $ApkSrc)) {
-  throw "APK not found at $ApkSrc — build first"
+  throw "APK not found at $ApkSrc - build first"
 }
 
 New-Item -ItemType Directory -Force -Path $Releases | Out-Null
@@ -40,17 +48,18 @@ $metaObj = [ordered]@{
   sizeBytes    = $item.Length
   sizeMB       = [math]::Round($item.Length / 1MB, 1)
   modifiedIso  = $item.LastWriteTime.ToString("o")
-  downloadPath = "/download/grok-remote.apk"
-  page         = "/download"
+  downloadPath = "/dl/apk"
+  page         = "/dl"
 }
 $metaObj | ConvertTo-Json | Set-Content $Meta -Encoding utf8
 
 Write-Host ""
 Write-Host "Published: $ApkDst"
 Write-Host ("Size: {0:N1} MB" -f ($item.Length / 1MB))
-Write-Host "On the phone (Tailscale connected), open:"
-Write-Host "  https://<your-machine>.<your-tailnet>.ts.net/download"
-Write-Host "  or http://<tailscale-ip>:8787/download"
+Write-Host "Easiest: open http://127.0.0.1:8787/pair on the PC and scan Install APK QR"
+Write-Host "Or on the phone (Tailscale connected):"
+Write-Host "  https://<your-machine>.<your-tailnet>.ts.net/dl"
+Write-Host "  or http://<tailscale-ip>:8787/dl"
 Write-Host ""
 Write-Host "Restart bridge if it was already running so routes are loaded:"
 Write-Host "  schtasks /Run /TN GrokRemoteBridge"

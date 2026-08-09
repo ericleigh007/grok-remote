@@ -79,6 +79,5 @@ data class UiState(
 
     val selectedVoiceLabel: String
         get() = ttsVoices.firstOrNull { it.name == selectedVoiceName }?.label
-            ?: selectedVoiceName
-            ?: "Default voice"
+            ?: "Voice"
 }

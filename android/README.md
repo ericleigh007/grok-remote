@@ -44,8 +44,9 @@ schtasks /Run /TN GrokRemoteBridge
 
 On the phone (Tailscale connected), open Chrome:
 
-- **https://&lt;your-machine&gt;.&lt;tailnet&gt;.ts.net/download**
-- or **http://&lt;pc-tailscale-ip&gt;:8787/download**
+- **Easiest:** PC `http://127.0.0.1:8787/pair` → scan **Install APK** QR
+- **https://&lt;your-machine&gt;.&lt;tailnet&gt;.ts.net/dl**
+- or **http://&lt;pc-tailscale-ip&gt;:8787/dl**
 
 Tap **Download APK**, allow install from browser, update.
 

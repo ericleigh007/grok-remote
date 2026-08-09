@@ -530,6 +530,15 @@ def pair_connect_url(request: Optional[Request] = None) -> str:
     return f"{base}/?{urlencode({'token': token})}"
 
 
+def download_page_url(request: Optional[Request] = None) -> str:
+    """Short phone-facing install URL (prefer /dl over /download)."""
+    return f"{pair_base_url(request)}/dl"
+
+
+def apk_file_url(request: Optional[Request] = None) -> str:
+    return f"{pair_base_url(request)}/dl/apk"
+
+
 def _is_loopback_host(host: Optional[str]) -> bool:
     if not host:
         return False
@@ -574,67 +583,13 @@ async def index():
     )
 
 
-@app.get("/pair", response_class=HTMLResponse)
-async def pair_page(request: Request):
-    """Open this on the PC only; phone scans the QR — no typing the token."""
-    require_local_pair(request)
-    connect = pair_connect_url(request)
-    base = pair_base_url(request)
-    # Do not print the full tokenized URL as copyable text (QR only).
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Grok Remote — Pair phone</title>
-  <style>
-    :root {{ color-scheme: dark; font-family: system-ui, sans-serif; }}
-    body {{
-      margin: 0; min-height: 100vh; display: grid; place-items: center;
-      background: #0b1020; color: #e8eefc;
-    }}
-    .card {{
-      background: #121a2f; border: 1px solid rgba(255,255,255,.08);
-      border-radius: 16px; padding: 1.5rem 1.75rem; max-width: 28rem;
-      text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,.35);
-    }}
-    h1 {{ margin: 0 0 .4rem; font-size: 1.35rem; }}
-    p {{ color: #8b9bb8; line-height: 1.45; }}
-    img {{
-      width: min(280px, 70vw); height: auto; background: #fff;
-      border-radius: 12px; padding: 12px; margin: 1rem 0;
-    }}
-    code {{
-      font-size: 12px; background: #1a2440; padding: .15rem .4rem; border-radius: 6px;
-    }}
-    .hint {{ font-size: 13px; margin-top: 1rem; }}
-    .lock {{ color: #3dd68c; font-size: 12px; margin-bottom: .75rem; }}
-    a {{ color: #6ea8ff; }}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="lock">PC only — open this exact URL: http://127.0.0.1:8787/pair</div>
-    <h1>Pair your phone</h1>
-    <p>Do <strong>not</strong> open the phone HTTPS URL for pairing. This page is only on the PC at <code>127.0.0.1</code>. Scan with the phone camera (Tailscale connected).</p>
-    <img src="/pair/qr.png" alt="Pairing QR code" width="280" height="280" />
-    <p class="hint">Phone opens the chat URL in the QR (not <code>/pair</code>):<br/>
-      <code>{base}</code><br/>
-      App install: <a href="{base}/download">{base}/download</a>
-      · <a href="/">Open chat on this PC</a>
-    </p>
-  </div>
-</body>
-</html>"""
-    return HTMLResponse(html)
-
-
-@app.get("/pair/qr.png")
-async def pair_qr(request: Request, scale: int = Query(default=8, ge=2, le=16)):
-    require_local_pair(request)
-    connect = pair_connect_url(request)
-    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=scale, border=2)
-    qr.add_data(connect)
+def _qr_png(data: str, scale: int = 8) -> Response:
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=scale,
+        border=2,
+    )
+    qr.add_data(data)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     buf = io.BytesIO()
@@ -644,6 +599,114 @@ async def pair_qr(request: Request, scale: int = Query(default=8, ge=2, le=16)):
         media_type="image/png",
         headers={"Cache-Control": "no-store"},
     )
+
+
+@app.get("/pair", response_class=HTMLResponse)
+async def pair_page(request: Request):
+    """Open this on the PC only; phone scans the QRs — no typing URLs or tokens."""
+    require_local_pair(request)
+    base = pair_base_url(request)
+    dl = download_page_url(request)
+    info = _apk_info()
+    apk_meta = (
+        f"{info['sizeMB']} MB · {info['modifiedIso']}"
+        if info.get("available")
+        else "No APK published yet — run scripts/publish-apk.ps1"
+    )
+    # Do not print the full tokenized chat URL as copyable text (QR only).
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Grok Remote — Pair &amp; install</title>
+  <style>
+    :root {{ color-scheme: dark; font-family: system-ui, sans-serif; }}
+    body {{
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      background: #0b1020; color: #e8eefc; padding: 1.25rem;
+    }}
+    .wrap {{
+      display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center;
+      max-width: 44rem;
+    }}
+    .card {{
+      background: #121a2f; border: 1px solid rgba(255,255,255,.08);
+      border-radius: 16px; padding: 1.35rem 1.5rem; width: min(20rem, 100%);
+      text-align: center; box-shadow: 0 12px 40px rgba(0,0,0,.35);
+    }}
+    h1 {{ margin: 0 0 .35rem; font-size: 1.2rem; }}
+    h2 {{ margin: 0 0 .35rem; font-size: 1.05rem; color: #c5d4f5; }}
+    p {{ color: #8b9bb8; line-height: 1.45; font-size: 14px; margin: .4rem 0; }}
+    img {{
+      width: min(220px, 62vw); height: auto; background: #fff;
+      border-radius: 12px; padding: 10px; margin: .75rem 0;
+    }}
+    code {{
+      font-size: 11px; background: #1a2440; padding: .15rem .4rem; border-radius: 6px;
+      word-break: break-all;
+    }}
+    .hint {{ font-size: 12px; margin-top: .5rem; }}
+    .lock {{ color: #3dd68c; font-size: 12px; margin-bottom: .5rem; }}
+    .badge {{
+      display: inline-block; font-size: 11px; font-weight: 600;
+      letter-spacing: .04em; text-transform: uppercase;
+      padding: .2rem .5rem; border-radius: 999px; margin-bottom: .5rem;
+    }}
+    .badge-pair {{ background: rgba(61,214,140,.15); color: #3dd68c; }}
+    .badge-dl {{ background: rgba(110,168,255,.15); color: #6ea8ff; }}
+    a {{ color: #6ea8ff; }}
+    .foot {{
+      width: 100%; text-align: center; color: #8b9bb8; font-size: 12px; margin-top: .25rem;
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="lock" style="width:100%;text-align:center">
+      PC only — open <code>http://127.0.0.1:8787/pair</code> on this machine
+    </div>
+
+    <div class="card">
+      <div class="badge badge-pair">1 · Pair</div>
+      <h1>Pair your phone</h1>
+      <p>Scan with the phone camera (Tailscale connected). Opens chat with the token — do not type it.</p>
+      <img src="/pair/qr.png" alt="Pairing QR code" width="220" height="220" />
+      <p class="hint">QR target is the chat base:<br/><code>{base}</code></p>
+    </div>
+
+    <div class="card">
+      <div class="badge badge-dl">2 · Install APK</div>
+      <h2>Install / update app</h2>
+      <p>Scan to open the install page — no typing <code>/download</code> on the phone.</p>
+      <img src="/pair/dl-qr.png" alt="APK download QR code" width="220" height="220" />
+      <p class="hint">{apk_meta}<br/>
+        Phone URL: <code>{dl}</code><br/>
+        Short path: <code>/dl</code> · APK file: <code>/dl/apk</code>
+      </p>
+    </div>
+
+    <p class="foot">
+      <a href="/">Open chat on this PC</a>
+      · <a href="/dl">Preview install page</a>
+    </p>
+  </div>
+</body>
+</html>"""
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/pair/qr.png")
+async def pair_qr(request: Request, scale: int = Query(default=8, ge=2, le=16)):
+    require_local_pair(request)
+    return _qr_png(pair_connect_url(request), scale=scale)
+
+
+@app.get("/pair/dl-qr.png")
+async def pair_dl_qr(request: Request, scale: int = Query(default=8, ge=2, le=16)):
+    """QR for the phone install page (public on tailnet — no token in the URL)."""
+    require_local_pair(request)
+    return _qr_png(download_page_url(request), scale=scale)
 
 
 @app.get("/api/pair-info")
@@ -656,8 +719,10 @@ async def pair_info(request: Request):
         "tailscaleIp": _tailscale_ipv4(),
         "lanIp": _lan_ipv4(),
         "loopbackOnly": True,
-        "downloadPage": f"{pair_base_url(request)}/download",
-        "apkUrl": f"{pair_base_url(request)}/download/grok-remote.apk",
+        "downloadPage": download_page_url(request),
+        "downloadPageLong": f"{pair_base_url(request)}/download",
+        "apkUrl": apk_file_url(request),
+        "apkUrlLong": f"{pair_base_url(request)}/download/grok-remote.apk",
     }
 
 
@@ -693,23 +758,24 @@ def _apk_info() -> dict[str, Any]:
 async def download_info(request: Request):
     info = _apk_info()
     if info.get("available"):
-        info["url"] = f"{pair_base_url(request)}/download/grok-remote.apk"
-        info["page"] = f"{pair_base_url(request)}/download"
+        info["url"] = apk_file_url(request)
+        info["page"] = download_page_url(request)
+        info["urlLong"] = f"{pair_base_url(request)}/download/grok-remote.apk"
+        info["pageLong"] = f"{pair_base_url(request)}/download"
     return info
 
 
-@app.get("/download", response_class=HTMLResponse)
-async def download_page(request: Request):
-    """Phone-friendly install page (Tailscale HTTPS)."""
+def _download_page_html(request: Request) -> HTMLResponse:
+    """Phone-friendly install page (Tailscale HTTPS). Served at /dl and /download."""
     base = pair_base_url(request)
+    apk_href = "/dl/apk"
+    apk_display = f"{base}/dl/apk"
     info = _apk_info()
     if not info.get("available"):
         body = """
         <p class="warn">No APK published yet.</p>
         <p>On the PC run:</p>
-        <pre>cd android
-.\\gradlew.bat :app:assembleDebug
-..\\scripts\\publish-apk.ps1</pre>
+        <pre>powershell -ExecutionPolicy Bypass -File .\\scripts\\publish-apk.ps1</pre>
         """
     else:
         body = f"""
@@ -719,14 +785,14 @@ async def download_page(request: Request):
           · {info['modifiedIso']}
           · {info['source']}
         </p>
-        <a class="btn" href="/download/grok-remote.apk">Download APK</a>
+        <a class="btn" href="{apk_href}">Download APK</a>
         <ol class="steps">
           <li>Open this page in <strong>Chrome</strong> on the phone (Tailscale on).</li>
           <li>Tap Download — allow installs from the browser if asked.</li>
           <li>Open the APK and update.</li>
           <li>Pair via QR from the PC <code>/pair</code> page if needed.</li>
         </ol>
-        <p class="hint">Direct link:<br/><code>{base}/download/grok-remote.apk</code></p>
+        <p class="hint">Direct link:<br/><code>{apk_display}</code></p>
         """
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -779,15 +845,13 @@ async def download_page(request: Request):
     )
 
 
-@app.get("/download/grok-remote.apk")
-async def download_apk():
+def _apk_file_response() -> FileResponse:
     path = _resolve_apk()
     if not path:
         raise HTTPException(
             status_code=404,
             detail="APK not found. Build and run scripts/publish-apk.ps1 on the PC.",
         )
-    # Android installers expect this content type
     return FileResponse(
         path,
         media_type="application/vnd.android.package-archive",
@@ -797,6 +861,20 @@ async def download_apk():
             "Content-Disposition": 'attachment; filename="grok-remote-debug.apk"',
         },
     )
+
+
+@app.get("/dl", response_class=HTMLResponse)
+@app.get("/download", response_class=HTMLResponse)
+async def download_page(request: Request):
+    """Short /dl and long /download — same install page (no auth; Tailscale only)."""
+    return _download_page_html(request)
+
+
+@app.get("/dl/apk")
+@app.get("/download/grok-remote.apk")
+async def download_apk():
+    """Short /dl/apk and long path — same APK file."""
+    return _apk_file_response()
 
 
 if WEB_DIR.exists():
@@ -871,7 +949,8 @@ def main() -> None:
     port = int(CONFIG.get("bind_port", 8787))
     connect = pair_connect_url()
     log.info("Grok Remote UI: http://127.0.0.1:%s/", port)
-    log.info("Pair phone (QR, no typing): http://127.0.0.1:%s/pair", port)
+    log.info("Pair + install QRs (PC only): http://127.0.0.1:%s/pair", port)
+    log.info("Phone APK install (short): %s/dl", pair_base_url())
     log.info("Phone connect URL: %s", connect)
     log.info("Lifecycle log: %s", life_path)
     try:

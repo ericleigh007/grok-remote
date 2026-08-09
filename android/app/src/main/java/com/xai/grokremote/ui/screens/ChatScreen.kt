@@ -227,8 +227,12 @@ private fun TopBar(state: UiState, vm: GrokViewModel) {
 }
 
 private fun shortVoiceLabel(label: String): String {
-    // "Aria (en-US · cloud)" -> "Aria"
-    return label.substringBefore(" (").substringBefore(" · ").ifBlank { "Voice" }
+    // "English (United States) · Female · 2" -> keep short for chip
+    val parts = label.split(" · ")
+    return when {
+        parts.size >= 2 -> parts.take(2).joinToString(" · ")
+        else -> label.take(28).ifBlank { "Voice" }
+    }
 }
 
 @Composable
@@ -498,7 +502,7 @@ private fun VoicePickerSheet(
         ) {
             Text("TTS voice", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, color = TextPrimary)
             Text(
-                "Uses the device speech engine. Prefer Neural / Natural / cloud voices when available.",
+                "Tap a voice to select and hear a preview. On-device voices work offline; Network needs data.",
                 color = Muted,
                 fontSize = 13.sp,
                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
@@ -547,18 +551,13 @@ private fun VoicePickerSheet(
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        v.label.substringBefore(" ("),
+                                        text = v.label,
                                         color = TextPrimary,
                                         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                         fontSize = 14.sp,
                                     )
                                     Text(
-                                        buildString {
-                                            append(v.locale)
-                                            append(if (v.networkRequired) " · cloud" else " · on-device")
-                                            append(" · q")
-                                            append(v.quality)
-                                        },
+                                        text = v.detail,
                                         color = Muted,
                                         fontSize = 11.sp,
                                     )
