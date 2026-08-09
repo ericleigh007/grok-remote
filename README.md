@@ -1,158 +1,350 @@
 # Grok Remote
 
-Phone-friendly remote control for **local Grok Build** on your PC. No Grok source needed — talks to `grok agent stdio` over ACP.
+**Control local [Grok Build](https://x.ai) from your phone — without forking Grok, without reverse-engineering the TUI, and without exposing your agent to the public internet.**
 
-## What you get
+Grok Remote is a thin, open-source remote for **your own machine**. It uses the same **official** surfaces xAI already ships:
 
-- **Typing chat** in a mobile browser (sideload APK later if you want)
-- **Multiple sessions** (starts two if you list multiple projects; `+ Session` anytime)
-- **Streaming** replies + tool activity
-- **STT / TTS** via the browser (Chrome on Android works well)
-- **Away from home** via **Tailscale** (recommended) + a shared secret token
+- `grok agent serve` — long-lived Agent Client Protocol (ACP) over WebSocket  
+- Session resume / history that already lives under `~/.grok`  
+- Your existing login (OAuth or API key) on the PC  
 
-## Architecture (durable)
+Nothing here patches or reimplements Grok. If it works in the desktop agent, it works here.
+
+---
+
+## Screenshots
+
+> **Android app** — drop PNGs into `docs/images/` and uncomment the lines below.
+
+<!--
+<p align="center">
+  <img src="docs/images/android-chat.png" alt="Android chat with thinking and tools" width="280" />
+  &nbsp;
+  <img src="docs/images/android-thinking.png" alt="Thinking panel expanded" width="280" />
+  &nbsp;
+  <img src="docs/images/android-voice.png" alt="TTS voice picker" width="280" />
+</p>
+-->
+
+| Placeholder | Suggested capture |
+|-------------|-------------------|
+| `docs/images/android-chat.png` | Main chat: session tabs, Grok reply with markdown |
+| `docs/images/android-thinking.png` | Live **Thinking** panel + tool cards |
+| `docs/images/android-voice.png` | TTS voice picker bottom sheet |
+| `docs/images/android-pair.png` | In-app QR scanner / pair screen |
+| `docs/images/pc-pair.png` | PC browser at `http://127.0.0.1:8787/pair` |
+
+---
+
+## Why this exists
+
+Grok Build is excellent at the desk. Away from the desk, you still want:
+
+- The **same sessions** you already started on the PC  
+- **Thinking + tool use** visible like the desktop client  
+- **Voice** that isn’t a browser afterthought  
+- **Secure** access that doesn’t open a random port on the internet  
+
+Grok Remote is that remote: a small PC bridge + Android app (and a web fallback), all on top of **standard Grok agent serve**.
+
+---
+
+## Highlights
+
+| Feature | What you get |
+|---------|----------------|
+| **No Grok modifications** | Uses `grok agent serve` and ACP — stock xAI CLI support |
+| **Scheduled tasks** | Agent + bridge survive logon; not tied to a terminal window |
+| **`/pair` on the PC** | Loopback-only QR page; phone never fetches the secret URL as a page |
+| **QR login on Android** | Scan once; token stored in encrypted prefs |
+| **APK over the bridge** | ` /download ` serves the latest debug APK — no USB dance for updates |
+| **Multi-session** | Resume real Grok sessions (Flow, doorbell, …) with recent history in the UI |
+| **TUI-shaped stream** | Thinking, tools, markdown replies, cancel + midstream interrupt |
+| **STT / TTS** | System speech recognizer + system TTS with **voice picker** |
+
+---
+
+## Architecture
 
 ```text
-Phone  --Tailscale HTTPS-->  bridge :8787  --WebSocket ACP-->  grok agent serve :2419
-         (UI + pairing)         auto-reconnect                  long-lived backend
+┌─────────────────────┐         encrypted mesh          ┌──────────────────────────────┐
+│  Android app        │ ──────────────────────────────► │  Your PC                     │
+│  (or mobile browser)│   e.g. Tailscale HTTPS          │                              │
+│                     │   https://pc…ts.net/            │  Scheduled tasks:            │
+│  • QR pair          │                                 │   • GrokAgentServe  :2419    │
+│  • chat / think     │                                 │   • GrokRemoteBridge :8787   │
+│  • tools / voice    │                                 │                              │
+│  • cancel / inject  │                                 │  grok agent serve  (ACP/WS)  │
+└─────────────────────┘                                 │         ▲                    │
+                                                        │         │ WebSocket ACP      │
+                                                        │         │ 127.0.0.1 only     │
+                                                        │  Python bridge (this repo)   │
+                                                        │  pair · download · sessions  │
+                                                        └──────────────────────────────┘
 ```
 
-This is better than a single process that spawns `grok agent stdio`:
+**Security model (single user, fixed setup):**
 
-| | **stdio child** (old) | **agent serve + WS** (current) |
-|--|----------------------|--------------------------------|
-| Agent dies with bridge? | Yes | **No** — separate process |
-| Reconnect phone UI | Restart whole stack | Bridge reconnects WS, re-attaches sessions |
-| Multi-client / future | Awkward | Natural (ACP serve) |
-| Ops | One process | Two scheduled tasks |
+1. **Remote path** — private mesh (we document **Tailscale**). Other VPN / reverse-proxy setups work the same idea; we only show Tailscale end-to-end.  
+2. **Agent secret** — `grok agent serve --secret` binds to **localhost**. The phone never talks to port `2419`.  
+3. **Bridge token** — phone authenticates to `:8787` with a long random `remote_token`.  
+4. **`/pair` is loopback-only** — QR (and token) are generated on the PC display; Tailscale clients get **403** on `/pair`.  
+5. **Grok credentials stay on the PC** — OAuth / API key never leave the machine.
 
-`config.json`:
+---
 
-- `agent_transport`: `"websocket"` (default) or `"stdio"`
-- `agent_ws_url`: `ws://127.0.0.1:2419/ws`
-- `agent_secret`: shared with `grok agent serve --secret …`
+## Prerequisites
 
-## Auto-start (required for stability)
+- Windows PC with **[Grok Build](https://docs.x.ai)** installed and working (`grok` on PATH, already logged in).  
+- **Python 3.11+**  
+- Phone: Android 8+ for the app (or any modern mobile browser for the web UI).  
+- Remote access: **[Tailscale](https://tailscale.com/)** on PC + phone (free Personal plan is enough).  
+  *WireGuard, ZeroTier, Cloudflare Tunnel, etc. can substitute; setup steps below are Tailscale-only.*
 
-**Do not** start these from a Grok agent tool shell via `Start-Process` — use Scheduled Tasks.
+---
+
+## Quick setup (PC)
+
+### 1. Clone and configure
 
 ```powershell
-cd C:\Users\ericl\source\repos\grok-remote
+git clone https://github.com/ericleigh007/grok-remote.git
+cd grok-remote
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r server\requirements.txt
+
+copy config.example.json config.json
+# Edit config.json — see below
+```
+
+**`config.json` (local only — never commit):**
+
+| Field | Purpose |
+|-------|---------|
+| `remote_token` | Long random string; phone WebSocket auth |
+| `agent_secret` | Same secret passed to `grok agent serve` |
+| `public_host` | Your Tailscale MagicDNS HTTPS origin, e.g. `https://my-pc.tailnet.ts.net` |
+| `projects[]` | Tabs to open: `name`, `cwd`, optional `session_id` to **resume** an existing Grok chat |
+| `history_limit` | How many recent turns to show in the app (agent still has full context) |
+
+```json
+{
+  "remote_token": "a-long-random-string",
+  "agent_secret": "another-long-random-string",
+  "public_host": "https://YOUR-PC.YOUR-TAILNET.ts.net",
+  "prefer_tailscale_https": true,
+  "default_cwd": "C:\\path\\to\\project",
+  "agent_transport": "websocket",
+  "agent_ws_url": "ws://127.0.0.1:2419/ws",
+  "agent_bind": "127.0.0.1:2419",
+  "history_limit": 40,
+  "projects": [
+    {
+      "name": "My project",
+      "cwd": "C:\\path\\to\\project",
+      "session_id": "optional-uuid-from-grok-session-info",
+      "replay_history": false
+    }
+  ],
+  "always_approve": true
+}
+```
+
+> `always_approve` matches unattended remote use. Deny rules / hooks on the Grok side still apply. Treat tokens like full agent keys for this machine.
+
+### 2. Install Windows scheduled tasks
+
+These start at logon and keep running under Task Scheduler (not inside a random terminal job):
+
+```powershell
 powershell -ExecutionPolicy Bypass -File .\install-startup.ps1
 ```
 
-Tasks:
+| Task | Role |
+|------|------|
+| **GrokAgentServe** | `grok agent --always-approve serve` on `127.0.0.1:2419` |
+| **GrokRemoteBridge** | Phone/web bridge on `:8787` → ACP WebSocket to the agent |
 
-- `GrokAgentServe` — `grok agent serve` on `127.0.0.1:2419`
-- `GrokRemoteBridge` — phone UI on `:8787` (ACP WebSocket client + auto-reconnect)
+Manual restart later:
 
 ```powershell
 schtasks /Run /TN GrokAgentServe
 schtasks /Run /TN GrokRemoteBridge
 ```
 
-Logs: `logs\lifecycle.log`, `logs\agent-serve*.log`, `logs\bridge-run.*`  
-Remove: `.\uninstall-startup.ps1`
-
-Foreground UI debug only: `.\start.ps1` (still expects agent serve if transport=websocket)
-
-## Quick start (PC)
-
-1. Edit `config.json`:
-   - Set a long random `remote_token`
-   - Add projects under `projects`. To **resume** an existing Grok chat, set `session_id` (from `/session` or the session list):
-     ```json
-     {
-       "name": "Doorbell C# Service",
-       "cwd": "C:\\Users\\ericl\\source\\repos\\ISITWeb",
-       "session_id": "019fb45d-fbb1-7511-b086-fa4f190ac517",
-       "replay_history": false
-     }
-     ```
-     `replay_history: false` uses `session/resume` (keeps full PC context, does not dump 400+ turns into the phone). Set `true` only if you want full history replay.
-2. Start the bridge:
+Uninstall:
 
 ```powershell
-.\start.ps1
+.\uninstall-startup.ps1
 ```
 
-3. Open on this machine first: `http://127.0.0.1:8787/` and paste the token.
+### 3. Tailscale (remote path)
 
-## Away from home (Tailscale) — pair with QR (no typing)
+Other private networks work; **this guide only walks through Tailscale.**
 
-1. Install [Tailscale](https://tailscale.com/) on the PC and the Android phone; same account. Both **Connected**.
-2. Keep the PC on and `start.ps1` running.
-3. **For mic / STT (required on Android Chrome):** enable Tailscale HTTPS front door once:
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\enable-tailscale-https.ps1
-   # same as: tailscale serve --bg http://127.0.0.1:8787
+1. Install [Tailscale](https://tailscale.com/download) on the **PC** and **phone**.  
+2. Sign into the **same account** (or share the PC node).  
+3. Confirm both show **Connected**.  
+4. Enable **Serve** for HTTPS on the PC (required for browser mic; also a clean origin for the app):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\enable-tailscale-https.ps1
+# equivalent: tailscale serve --bg http://127.0.0.1:8787
+```
+
+First time, Tailscale may open a browser to enable Serve/HTTPS on the tailnet. Prefer **Serve** (tailnet only). You do **not** need **Funnel** (public internet).
+
+Your phone will use something like:
+
+```text
+https://YOUR-PC.YOUR-TAILNET.ts.net/
+```
+
+Find the name with:
+
+```powershell
+& "C:\Program Files\Tailscale\tailscale.exe" status
+```
+
+### 4. Pair the phone (QR — secure)
+
+1. On the **PC only**, open:
+
+   ```text
+   http://127.0.0.1:8787/pair
    ```
-   Phone must open **`https://<pc>.ts.net/`** (secure context). Plain `http://100.x:8787` allows typing only — **mic is blocked by the browser**.
-4. **On the PC browser only**, open: [http://127.0.0.1:8787/pair](http://127.0.0.1:8787/pair)  
-   (`/pair` is **loopback-only** — phone/Tailscale clients get HTTP 403.)
-5. **On the phone**, scan the QR with the camera (or Google Lens).  
-   The QR prefers the HTTPS Serve URL when configured. Chrome opens, stores the token, strips it from the address bar.
-6. Bookmark the chat on the phone for next time (token stays in localStorage).
 
-### Mic / voice tips
+   This page is **loopback-only**. Opening `/pair` over Tailscale returns **403** — by design.
 
-- Use **Chrome** on Android.
-- **Tap** the mic once to start (button turns red / “Listening…”), **tap again** to stop — not press-and-hold.
-- Allow **Microphone** when Chrome prompts (Site settings if you denied earlier).
-- Web Speech uses Google’s STT cloud on Chrome — needs phone network.
-- TTS (“TTS on”) usually works even on HTTP; STT does not.
+2. On the phone, scan the QR with the camera (or the in-app scanner).  
+   The QR embeds the **HTTPS chat URL + token**. The token is stored on the device; it is stripped from the address bar after load.
 
-Manual fallback: open `http://<pc-tailscale-ip>:8787/` and paste `remote_token` once (no mic).
+3. Bookmark the site or use the Android app (below).
 
-Security model (single user, fixed connection):
+### 5. Web UI (optional)
 
-- Tailscale encrypts the path (no port-forwarding to the public internet).
-- The bridge requires the remote token on every WebSocket connect.
-- Grok runs with `--always-approve` so tools work while you are away — **treat the token like a full agent key for this machine**.
-- `/pair` and `/pair/qr.png` only answer on `127.0.0.1` / `::1` so the QR is not fetchable from the phone or tailnet.
+Mobile browser works for typing + streaming. Voice is best on **HTTPS** (Tailscale Serve) in Chrome.
 
-## Using voice
-
-- **Mic button**: browser speech-to-text; when recognition ends, the message auto-sends.
-- **TTS on/off**: reads the completed assistant reply aloud.
-- Use **Chrome** on Android for best STT support; grant microphone permission.
-
-## API sketch
-
-| Endpoint | Notes |
-|----------|--------|
-| `GET /` | Chat UI |
-| `WS /ws?token=…` | Real-time events + prompts |
-| `POST /api/sessions` | Create session (`X-Remote-Token` header) |
-| `POST /api/prompt` | Non-WS prompt |
-| `GET /api/health` | Liveness (no auth) |
-
-## Architecture
-
-```
-Phone (Chrome) --Tailscale--> PC:8787 bridge --stdio ACP--> grok agent --always-approve
+```text
+https://YOUR-PC.YOUR-TAILNET.ts.net/
 ```
 
-## Android app (native)
+---
 
-Kotlin + Compose client in [`android/`](android/):
+## Android app
+
+Native **Kotlin + Jetpack Compose** client in [`android/`](android/):
+
+- Session tabs, busy indicators  
+- **Thinking** (expand/collapse) and **tool** cards  
+- **Markwon** markdown rendering  
+- System **STT** + **TTS** with **voice picker**  
+- **Cancel turn** and **send-while-busy** (interrupt + inject new instruction)  
+- QR pair + encrypted token storage  
+
+### Build once on the PC
 
 ```powershell
-# One-time SDK (if needed)
+# SDK (first time)
 powershell -ExecutionPolicy Bypass -File .\scripts\install-android-sdk.ps1
 
 cd android
-$env:JAVA_HOME = "C:\Program Files\Android\openjdk\jdk-21.0.8"
+$env:JAVA_HOME = "C:\Program Files\Android\openjdk\jdk-21.0.8"   # or your JDK 17+
 .\gradlew.bat :app:assembleDebug
-# APK: app\build\outputs\apk\debug\app-debug.apk
-adb install -r app\build\outputs\apk\debug\app-debug.apk
 ```
 
-See [android/README.md](android/README.md). Features: thinking/tool timeline, Markwon markdown, system STT/TTS, cancel + midstream interrupt, QR pair.
+### Publish APK to the bridge (no USB for updates)
+
+```powershell
+# from repo root — builds (unless -SkipBuild) and copies into releases/
+powershell -ExecutionPolicy Bypass -File .\scripts\publish-apk.ps1
+```
+
+Then on the phone (Tailscale on), open Chrome:
+
+```text
+https://YOUR-PC.YOUR-TAILNET.ts.net/download
+```
+
+Tap **Download APK**, allow install from the browser, update.  
+Direct file: `/download/grok-remote.apk`.
+
+USB still works if you prefer:
+
+```powershell
+adb install -r android\app\build\outputs\apk\debug\app-debug.apk
+```
+
+---
+
+## Day-to-day use
+
+1. Leave the PC powered; tasks keep **agent serve** + **bridge** up after logon.  
+2. Phone: Tailscale **Connected**.  
+3. Open the app (or HTTPS bookmark).  
+4. Switch sessions, chat, expand thinking, watch tools, cancel or inject midstream.  
+5. After you ship a new APK: `publish-apk.ps1` → phone `/download` → install.
+
+---
+
+## Endpoints (bridge)
+
+| Path | Purpose |
+|------|---------|
+| `/` | Web chat UI |
+| `/pair` | **PC loopback only** — QR pairing |
+| `/pair/qr.png` | QR image (loopback only) |
+| `/download` | Install page for the Android APK |
+| `/download/grok-remote.apk` | APK file |
+| `/ws?token=…` | App / web realtime channel |
+| `/api/health` | Liveness (`agentAlive`, transport, sessions) |
+
+---
+
+## Project layout
+
+```text
+grok-remote/
+  server/           # FastAPI bridge (ACP client, history, pair, download)
+  web/              # Mobile web UI
+  android/          # Compose app
+  scripts/          # SDK install, APK publish
+  config.example.json
+  install-startup.ps1   # registers GrokAgentServe + GrokRemoteBridge
+  start-agent-serve.ps1
+  start-background.ps1
+  docs/images/      # optional screenshots for this README
+```
+
+---
 
 ## Troubleshooting
 
-- **401 / invalid token**: match `config.json` `remote_token` (or `GROK_REMOTE_TOKEN` env).
-- **Agent won't start**: ensure `grok` is on PATH (`%USERPROFILE%\.grok\bin`) and you are logged in (`grok login`).
-- **Empty sessions**: check the server console for ACP errors; first session creation can take a few seconds.
-- **STT missing**: use Chrome; Safari/Firefox support varies.
+| Symptom | Check |
+|---------|--------|
+| Pair page “refused” | Bridge not running → `schtasks /Run /TN GrokRemoteBridge` |
+| `/pair` over Tailscale is 403 | Expected — use `http://127.0.0.1:8787/pair` on the PC |
+| Phone can’t load HTTPS | Tailscale Serve + both devices Connected |
+| Chat connects but agent silent | `GET /api/health` → `agentAlive`; restart `GrokAgentServe` |
+| Empty history in app | `history_limit` in config; session UUID must match on-disk Grok session |
+| Mic fails in browser | Use HTTPS Serve URL + Chrome; or use the native app STT |
+| Bad TTS voice | App top bar → voice chip → pick Neural/Natural/cloud voice |
+
+---
+
+## Security notes
+
+- Keep `config.json` **out of git** (gitignored). Ship only `config.example.json`.  
+- Prefer **Tailscale Serve** (private) over **Funnel** (public).  
+- `remote_token` / `agent_secret` = full control of the local agent — use long random values.  
+- `always_approve` is for unattended remote; tighten if that doesn’t match your risk tolerance.
+
+---
+
+## License / status
+
+Personal / experimental open project. Grok Build remains product of xAI; this repo only orchestrates the **documented** CLI agent interfaces.
+
+Contributions and screenshots welcome — especially fills for the image slots above.
