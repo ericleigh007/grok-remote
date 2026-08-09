@@ -14,25 +14,25 @@ Nothing here patches or reimplements Grok. If it works in the desktop agent, it 
 
 ## Screenshots
 
-> **Android app** — drop PNGs into `docs/images/` and uncomment the lines below.
-
-<!--
 <p align="center">
-  <img src="docs/images/android-chat.png" alt="Android chat with thinking and tools" width="280" />
-  &nbsp;
-  <img src="docs/images/android-thinking.png" alt="Thinking panel expanded" width="280" />
-  &nbsp;
+  <img src="docs/images/android-chat.jpg" alt="Grok Remote Android app — chat, sessions, and streaming reply" width="300" />
+  &nbsp;&nbsp;
+  <img src="docs/images/pc-pair.png" alt="PC /pair page — loopback-only QR pairing (QR hidden in this capture)" width="420" />
+</p>
+
+<p align="center">
+  <em>Left:</em> Android client (sessions, composer, midstream interrupt).
+  &nbsp;·&nbsp;
+  <em>Right:</em> PC <code>/pair</code> page — QR is loopback-only; capture shown with code redacted.
+</p>
+
+<!-- Optional future shots — drop files in docs/images/ and uncomment:
+<p align="center">
+  <img src="docs/images/android-thinking.png" alt="Thinking panel" width="280" />
   <img src="docs/images/android-voice.png" alt="TTS voice picker" width="280" />
+  <img src="docs/images/android-pair.png" alt="In-app QR scanner" width="280" />
 </p>
 -->
-
-| Placeholder | Suggested capture |
-|-------------|-------------------|
-| `docs/images/android-chat.png` | Main chat: session tabs, Grok reply with markdown |
-| `docs/images/android-thinking.png` | Live **Thinking** panel + tool cards |
-| `docs/images/android-voice.png` | TTS voice picker bottom sheet |
-| `docs/images/android-pair.png` | In-app QR scanner / pair screen |
-| `docs/images/pc-pair.png` | PC browser at `http://127.0.0.1:8787/pair` |
 
 ---
 

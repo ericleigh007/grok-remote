@@ -1,13 +1,14 @@
 # Screenshots
 
-Add PNG captures here for the main README:
+| File | Description |
+|------|-------------|
+| `android-chat.jpg` | Android app — main chat UI |
+| `pc-pair.png` | PC `/pair` page (QR redacted in published shot) |
 
-| File | Content |
-|------|---------|
-| `android-chat.png` | Main chat UI |
-| `android-thinking.png` | Thinking panel |
-| `android-voice.png` | Voice picker |
-| `android-pair.png` | QR pair screen |
-| `pc-pair.png` | PC `/pair` page |
+Optional extras (not required):
 
-Then uncomment the image block in the root `README.md`.
+| File | Description |
+|------|-------------|
+| `android-thinking.png` | Thinking panel expanded |
+| `android-voice.png` | TTS voice picker |
+| `android-pair.png` | In-app QR scanner |
