@@ -15,22 +15,25 @@ Nothing here patches or reimplements Grok. If it works in the desktop agent, it 
 ## Screenshots
 
 <p align="center">
-  <img src="docs/images/android-chat.jpg" alt="Grok Remote Android app — chat, sessions, and streaming reply" width="300" />
-  &nbsp;&nbsp;
-  <img src="docs/images/pc-pair.png" alt="PC /pair page — loopback-only QR pairing (QR hidden in this capture)" width="420" />
+  <img src="docs/images/android-chat.jpg" alt="Grok Remote Android app — chat, sessions, and streaming reply" width="260" />
+  &nbsp;
+  <img src="docs/images/android-pair.jpg" alt="Android in-app QR pairing screen" width="260" />
+  &nbsp;
+  <img src="docs/images/pc-pair.png" alt="PC /pair page — loopback-only QR pairing (QR hidden in this capture)" width="360" />
 </p>
 
 <p align="center">
-  <em>Left:</em> Android client (sessions, composer, midstream interrupt).
+  <em>Left:</em> Android chat (sessions, composer, midstream interrupt)
   &nbsp;·&nbsp;
-  <em>Right:</em> PC <code>/pair</code> page — QR is loopback-only; capture shown with code redacted.
+  <em>Center:</em> In-app QR pair screen
+  &nbsp;·&nbsp;
+  <em>Right:</em> PC <code>/pair</code> page (loopback-only; QR redacted)
 </p>
 
 <!-- Optional future shots — drop files in docs/images/ and uncomment:
 <p align="center">
   <img src="docs/images/android-thinking.png" alt="Thinking panel" width="280" />
   <img src="docs/images/android-voice.png" alt="TTS voice picker" width="280" />
-  <img src="docs/images/android-pair.png" alt="In-app QR scanner" width="280" />
 </p>
 -->
 
