@@ -1,0 +1,35 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Local secrets / machine config (NEVER commit)
+.env
+config.json
+logs/
+serve-out.log
+serve-err.log
+
+# Local spikes / scratch with tokens
+spike_*.py
+
+# Android
+android/.gradle/
+android/**/build/
+android/local.properties
+android/**/*.apk
+android/**/*.aab
+android/.idea/
+*.iml
+android/captures/
+
+# Published binaries (large); rebuild with scripts/publish-apk.ps1
+releases/*.apk
+releases/latest.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~

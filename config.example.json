@@ -1,0 +1,25 @@
+{
+  "bind_host": "0.0.0.0",
+  "bind_port": 8787,
+  "remote_token": "change-me-to-a-long-random-string",
+  "public_host": "https://YOUR-MACHINE.YOUR-TAILNET.ts.net",
+  "prefer_tailscale_https": true,
+  "default_cwd": "C:\\path\\to\\your\\project",
+  "agent_transport": "websocket",
+  "agent_ws_url": "ws://127.0.0.1:2419/ws",
+  "agent_secret": "change-me-agent-serve-secret",
+  "agent_bind": "127.0.0.1:2419",
+  "auto_reconnect": true,
+  "history_limit": 40,
+  "history_include_thoughts": false,
+  "projects": [
+    {
+      "name": "my-project",
+      "cwd": "C:\\path\\to\\your\\project",
+      "session_id": null,
+      "replay_history": false
+    }
+  ],
+  "always_approve": true,
+  "model": null
+}
