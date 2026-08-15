@@ -1,6 +1,6 @@
 # Build (optional) + copy debug APK into releases/ for bridge download serving.
-#   powershell -ExecutionPolicy Bypass -File .\scripts\publish-apk.ps1
-#   powershell -ExecutionPolicy Bypass -File .\scripts\publish-apk.ps1 -SkipBuild
+#   pwsh -ExecutionPolicy Bypass -File .\scripts\publish-apk.ps1
+#   pwsh -ExecutionPolicy Bypass -File .\scripts\publish-apk.ps1 -SkipBuild
 param(
   [switch]$SkipBuild
 )
@@ -11,6 +11,7 @@ $Android = Join-Path $Root "android"
 $ApkSrc = Join-Path $Android "app\build\outputs\apk\debug\app-debug.apk"
 $Releases = Join-Path $Root "releases"
 $ApkDst = Join-Path $Releases "grok-remote-debug.apk"
+$ApkReleaseName = Join-Path $Releases "grok-remote.apk"
 $Meta = Join-Path $Releases "latest.json"
 
 $jdkCandidates = @(
@@ -42,6 +43,7 @@ if (-not (Test-Path $ApkSrc)) {
 
 New-Item -ItemType Directory -Force -Path $Releases | Out-Null
 Copy-Item $ApkSrc $ApkDst -Force
+Copy-Item $ApkSrc $ApkReleaseName -Force
 $item = Get-Item $ApkDst
 $metaObj = [ordered]@{
   filename     = $item.Name

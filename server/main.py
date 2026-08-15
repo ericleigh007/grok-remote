@@ -28,8 +28,9 @@ ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
 CONFIG_PATH = ROOT / "config.json"
 RELEASES_DIR = ROOT / "releases"
-# Preferred published name + gradle debug output fallback
-APK_PUBLISHED = RELEASES_DIR / "grok-remote-debug.apk"
+# Preferred published names + gradle debug output fallback
+APK_PUBLISHED = RELEASES_DIR / "grok-remote.apk"
+APK_PUBLISHED_DEBUG = RELEASES_DIR / "grok-remote-debug.apk"
 APK_BUILD_FALLBACK = (
     ROOT / "android" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 )
@@ -728,10 +729,9 @@ async def pair_info(request: Request):
 
 def _resolve_apk() -> Optional[Path]:
     """Prefer releases/ publish; fall back to latest Gradle debug APK."""
-    if APK_PUBLISHED.is_file():
-        return APK_PUBLISHED
-    if APK_BUILD_FALLBACK.is_file():
-        return APK_BUILD_FALLBACK
+    for path in (APK_PUBLISHED, APK_PUBLISHED_DEBUG, APK_BUILD_FALLBACK):
+        if path.is_file():
+            return path
     return None
 
 
@@ -749,7 +749,7 @@ def _apk_info() -> dict[str, Any]:
         "modifiedIso": __import__("datetime").datetime.fromtimestamp(st.st_mtime).isoformat(
             timespec="seconds"
         ),
-        "source": "releases" if path == APK_PUBLISHED else "gradle-debug",
+        "source": "releases" if path in (APK_PUBLISHED, APK_PUBLISHED_DEBUG) else "gradle-debug",
         "downloadPath": "/download/grok-remote.apk",
     }
 

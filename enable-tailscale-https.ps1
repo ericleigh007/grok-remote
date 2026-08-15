@@ -1,7 +1,7 @@
 # Enable Tailscale Serve so the phone can use HTTPS (required for mic / Web Speech).
 # Free on Personal plan. One-time admin consent may open in the browser.
 #
-#   powershell -ExecutionPolicy Bypass -File .\enable-tailscale-https.ps1
+#   pwsh -ExecutionPolicy Bypass -File .\enable-tailscale-https.ps1
 $ErrorActionPreference = "Continue"
 $ts = "C:\Program Files\Tailscale\tailscale.exe"
 if (-not (Test-Path $ts)) {

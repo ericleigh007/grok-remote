@@ -2,10 +2,21 @@
 #   1) GrokAgentServe  - long-lived `grok agent serve` (WebSocket ACP on 127.0.0.1:2419)
 #   2) GrokRemoteBridge - phone UI bridge (connects to agent via WebSocket, auto-reconnects)
 #
-#   powershell -ExecutionPolicy Bypass -File .\install-startup.ps1
+#   pwsh -ExecutionPolicy Bypass -File .\install-startup.ps1
 $ErrorActionPreference = "Stop"
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+  throw "PowerShell 7 (pwsh) is required. You are running Windows PowerShell $($PSVersionTable.PSVersion)."
+}
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ps = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$pwshCandidates = @(
+  (Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source),
+  (Join-Path $PSHOME "pwsh.exe"),
+  "C:\Program Files\PowerShell\7\pwsh.exe"
+) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+if (-not $pwshCandidates) {
+  throw "PowerShell 7 (pwsh) is required. Install from https://aka.ms/powershell and re-run."
+}
+$ps = $pwshCandidates
 $user = "$env:USERDOMAIN\$env:USERNAME"
 
 function Register-LongTask([string]$Name, [string]$Script, [string]$Desc) {

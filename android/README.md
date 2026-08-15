@@ -7,12 +7,14 @@ Native Compose client for the Grok Remote bridge. Desktop-TUI-inspired: thinking
 From the repo root (once):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-android-sdk.ps1
+pwsh -ExecutionPolicy Bypass -File .\scripts\install-android-sdk.ps1
 ```
 
 This installs under `%LOCALAPPDATA%\Android\Sdk` and writes `android/local.properties`.
 
 Uses JDK at `C:\Program Files\Android\openjdk\jdk-21.0.8` (or set `JAVA_HOME`).
+
+Prebuilt APK: download `grok-remote.apk` from [GitHub Releases](https://github.com/ericleigh007/grok-remote/releases/latest) or scan **Install APK** on the PC `/pair` page. Sideload notes (Samsung **Auto Blocker**, unknown apps, Play Protect) are in the root README.
 
 ## Build debug APK
 
@@ -37,7 +39,7 @@ Publish the APK into `releases/` and serve it from the bridge:
 
 ```powershell
 # from repo root — builds + copies APK
-powershell -ExecutionPolicy Bypass -File .\scripts\publish-apk.ps1
+pwsh -ExecutionPolicy Bypass -File .\scripts\publish-apk.ps1
 # bridge must be running (restart after first time routes are added)
 schtasks /Run /TN GrokRemoteBridge
 ```
