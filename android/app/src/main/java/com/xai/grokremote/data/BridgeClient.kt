@@ -105,6 +105,24 @@ class BridgeClient {
         send(o)
     }
 
+    fun openSession(sessionId: String, cwd: String?, title: String?) {
+        val o = JSONObject()
+            .put("type", "open_session")
+            .put("sessionId", sessionId)
+        if (!cwd.isNullOrBlank()) o.put("cwd", cwd)
+        if (!title.isNullOrBlank()) o.put("title", title)
+        send(o)
+    }
+
+    fun listSessions(showAll: Boolean) {
+        send(
+            JSONObject()
+                .put("type", "list_sessions")
+                .put("showAll", showAll)
+                .put("all", showAll),
+        )
+    }
+
     fun ping() {
         send(JSONObject().put("type", "ping"))
     }
@@ -125,6 +143,19 @@ class BridgeClient {
                             sessions = sessions,
                             projects = projects,
                             defaultCwd = o.optString("default_cwd", ""),
+                            available = o.optJSONArray("availableSessions").toAvailableList(),
+                            lastSessionId = o.optString("lastSessionId", "").ifBlank { null },
+                            availableTotal = o.optInt("availableTotal", 0),
+                            catalogTruncated = o.optBoolean("catalogTruncated", false),
+                        ),
+                    )
+                }
+                "session_catalog" -> {
+                    _events.tryEmit(
+                        BridgeEvent.SessionCatalog(
+                            available = o.optJSONArray("availableSessions").toAvailableList(),
+                            availableTotal = o.optInt("availableTotal", 0),
+                            catalogTruncated = o.optBoolean("catalogTruncated", false),
                         ),
                     )
                 }
@@ -246,6 +277,24 @@ class BridgeClient {
             out += ProjectOption(
                 name = p.optString("name", p.optString("cwd", "project")),
                 cwd = p.optString("cwd", ""),
+                sessionId = p.optString("session_id", p.optString("sessionId", "")).ifBlank { null },
+            )
+        }
+        return out
+    }
+
+    private fun JSONArray?.toAvailableList(): List<AvailableSession> {
+        if (this == null) return emptyList()
+        val out = mutableListOf<AvailableSession>()
+        for (i in 0 until length()) {
+            val p = optJSONObject(i) ?: continue
+            out += AvailableSession(
+                title = p.optString("title", p.optString("name", "Session")),
+                cwd = p.optString("cwd", ""),
+                sessionId = p.optString("sessionId", "").ifBlank { null },
+                updatedAt = p.optString("updatedAt", "").ifBlank { null },
+                messageCount = p.optInt("messageCount", 0),
+                preview = p.optString("preview", "").ifBlank { null },
             )
         }
         return out
@@ -284,6 +333,16 @@ sealed class BridgeEvent {
         val sessions: List<SessionState>,
         val projects: List<ProjectOption>,
         val defaultCwd: String,
+        val available: List<AvailableSession> = emptyList(),
+        val lastSessionId: String? = null,
+        val availableTotal: Int = 0,
+        val catalogTruncated: Boolean = false,
+    ) : BridgeEvent()
+
+    data class SessionCatalog(
+        val available: List<AvailableSession>,
+        val availableTotal: Int,
+        val catalogTruncated: Boolean,
     ) : BridgeEvent()
 
     data class SessionUpsert(

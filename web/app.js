@@ -2,6 +2,8 @@
   const TOKEN_KEY = "grok_remote_token";
   const TTS_KEY = "grok_remote_tts";
   const TTS_VOICE_KEY = "grok_remote_tts_voice";
+  const THINK_BEEP_KEY = "grok_remote_think_beep";
+  const LAST_SESSION_KEY = "grok_remote_last_session";
 
   const $ = (id) => document.getElementById(id);
   const authScreen = $("auth-screen");
@@ -17,11 +19,16 @@
   const newSessionBtn = $("new-session");
   const ttsToggle = $("tts-toggle");
   const ttsVoiceSelect = $("tts-voice");
+  const thinkBeepToggle = $("think-beep-toggle");
   const connStatus = $("conn-status");
   const sessionTabs = $("session-tabs");
   const projectSelect = $("project-select");
   const cwdLabel = $("cwd-label");
   const toolLine = $("tool-line");
+  const sessionPicker = $("session-picker");
+  const sessionPickerList = $("session-picker-list");
+  const showAllSessionsBtn = $("show-all-sessions");
+  const pickerNewSessionBtn = $("picker-new-session");
 
   /** @type {Map<string, any>} */
   const sessions = new Map();
@@ -29,9 +36,15 @@
   let ws = null;
   let token = localStorage.getItem(TOKEN_KEY) || "";
   let ttsOn = localStorage.getItem(TTS_KEY) !== "0";
+  let thinkBeepOn = localStorage.getItem(THINK_BEEP_KEY) === "1";
+  let thinkBeepTimer = null;
   let reconnectTimer = null;
   let speaking = false;
   let pendingSpeak = "";
+  let spokenTurnKey = "";
+  let availableSessions = [];
+  let availableTotal = 0;
+  let catalogTruncated = false;
 
   // QR / deep-link pairing: http://host:8787/?token=...
   // Phone scans QR from PC /pair — token is stored; no manual typing.
@@ -138,7 +151,61 @@
     ttsToggle.textContent = ttsOn ? "TTS on" : "TTS off";
     if (ttsVoiceSelect) ttsVoiceSelect.disabled = !ttsOn || !window.speechSynthesis;
   }
+  function setThinkBeepUi() {
+    if (!thinkBeepToggle) return;
+    thinkBeepToggle.textContent = thinkBeepOn ? "Beep on" : "Beep off";
+  }
   setTtsUi();
+  setThinkBeepUi();
+
+  function thinkingBeep() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.08);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.09);
+      osc.onended = () => { try { ctx.close(); } catch (_) {} };
+    } catch (_) {}
+  }
+
+  function stopThinkingCue() {
+    if (thinkBeepTimer) {
+      clearTimeout(thinkBeepTimer);
+      thinkBeepTimer = null;
+    }
+  }
+
+  function startThinkingCue() {
+    stopThinkingCue();
+    if (!thinkBeepOn) return;
+    const tick = (first) => {
+      thinkBeepTimer = setTimeout(() => {
+        const s = getActive();
+        if (!thinkBeepOn || !s || !s.busy) {
+          thinkBeepTimer = null;
+          return;
+        }
+        const last = s.messages[s.messages.length - 1];
+        if (last && last.role === "assistant" && last.streaming) {
+          thinkBeepTimer = null;
+          return;
+        }
+        thinkingBeep();
+        tick(false);
+      }, first ? 2500 : 10000);
+    };
+    tick(true);
+  }
 
   /** Score voices so Edge/Chrome pick something less awful than the default robot. */
   function scoreVoice(v) {
@@ -281,8 +348,63 @@
     return activeSessionId ? sessions.get(activeSessionId) : null;
   }
 
+  function showPicker() {
+    if (sessionPicker) sessionPicker.classList.remove("hidden");
+    if (chat) chat.classList.add("hidden");
+    renderPicker();
+  }
+  function hidePicker() {
+    if (sessionPicker) sessionPicker.classList.add("hidden");
+    if (chat) chat.classList.remove("hidden");
+  }
+  function openCatalogItem(item) {
+    if (!ws || ws.readyState !== WebSocket.OPEN || !item) return;
+    if (item.sessionId && sessions.has(item.sessionId)) {
+      activeSessionId = item.sessionId;
+      localStorage.setItem(LAST_SESSION_KEY, item.sessionId);
+      hidePicker();
+      renderTabs();
+      renderChat();
+      updateMeta();
+      return;
+    }
+    ws.send(JSON.stringify({
+      type: item.sessionId ? "open_session" : "new_session",
+      sessionId: item.sessionId || undefined,
+      cwd: item.cwd,
+      title: item.title,
+    }));
+  }
+  function renderPicker() {
+    if (!sessionPickerList) return;
+    sessionPickerList.innerHTML = "";
+    for (const item of availableSessions) {
+      const btn = document.createElement("button");
+      btn.className = "session-pick";
+      const cwdShort = (item.cwd || "").split(/[/\\]/).pop() || "";
+      const meta = [cwdShort, item.messageCount ? item.messageCount + " msgs" : ""]
+        .filter(Boolean)
+        .join(" · ");
+      btn.innerHTML = "<strong>" + escapeHtml(item.title || "Session") + "</strong>" +
+        (meta ? '<div class="meta">' + escapeHtml(meta) + "</div>" : "") +
+        (item.preview ? '<div class="meta">' + escapeHtml(item.preview) + "</div>" : "");
+      btn.onclick = () => openCatalogItem(item);
+      sessionPickerList.appendChild(btn);
+    }
+    if (showAllSessionsBtn) {
+      const hidden = Math.max(0, availableTotal - availableSessions.length);
+      showAllSessionsBtn.classList.toggle("hidden", !(catalogTruncated || hidden > 0));
+      showAllSessionsBtn.textContent = hidden > 0 ? ("Show all sessions (" + hidden + " more)") : "Show all sessions";
+    }
+  }
+
   function renderTabs() {
     sessionTabs.innerHTML = "";
+    const pick = document.createElement("button");
+    pick.className = "tab";
+    pick.textContent = "Sessions";
+    pick.onclick = () => showPicker();
+    sessionTabs.appendChild(pick);
     for (const s of sessions.values()) {
       const btn = document.createElement("button");
       btn.className = "tab" + (s.sessionId === activeSessionId ? " active" : "");
@@ -570,28 +692,54 @@
       case "hello": {
         sessions.clear();
         (msg.sessions || []).forEach((s) => ensureSessionLocal(s));
-        if (!activeSessionId && sessions.size) {
-          activeSessionId = [...sessions.keys()][0];
-        }
+        availableSessions = msg.availableSessions || [];
+        availableTotal = msg.availableTotal || availableSessions.length;
+        catalogTruncated = !!msg.catalogTruncated;
         fillProjects(msg.projects || [], msg.default_cwd);
+        const last = localStorage.getItem(LAST_SESSION_KEY) || msg.lastSessionId || "";
+        if (last && sessions.has(last)) {
+          activeSessionId = last;
+          hidePicker();
+        } else if (last) {
+          const item = availableSessions.find((s) => s.sessionId === last) || {
+            sessionId: last,
+            title: "Last session",
+            cwd: msg.default_cwd || "",
+          };
+          openCatalogItem(item);
+        } else if (sessions.size) {
+          activeSessionId = [...sessions.keys()][0];
+          hidePicker();
+        } else {
+          showPicker();
+        }
         renderTabs();
         renderChat();
         updateMeta();
         break;
       }
+      case "session_catalog": {
+        availableSessions = msg.availableSessions || [];
+        availableTotal = msg.availableTotal || availableSessions.length;
+        catalogTruncated = !!msg.catalogTruncated;
+        showPicker();
+        break;
+      }
       case "session_created":
       case "session_loaded": {
         ensureSessionLocal(msg);
-        if (!activeSessionId || msg.type === "session_loaded") {
-          // Prefer a resumed ongoing project when it appears
-          activeSessionId = msg.sessionId;
-        }
+        activeSessionId = msg.sessionId;
+        localStorage.setItem(LAST_SESSION_KEY, msg.sessionId);
+        hidePicker();
         renderTabs();
         renderChat();
         updateMeta();
         break;
       }
       case "user_message": {
+        pendingSpeak = "";
+        window.speechSynthesis?.cancel();
+        startThinkingCue();
         const s = ensureSessionLocal({ sessionId: msg.sessionId });
         s.busy = true;
         // Avoid dup if we already appended optimistically
@@ -618,6 +766,7 @@
             s.messages.push({ role: "assistant", text: msg.text, streaming: true });
           }
           pendingSpeak = (s.messages[s.messages.length - 1] || {}).text || "";
+          stopThinkingCue();
           if (msg.sessionId === activeSessionId) {
             // Efficient update: re-render active only
             renderChat();
@@ -635,13 +784,16 @@
             // keep line until turn complete
           }
         } else if (msg.updateType === "agent_thought_chunk") {
-          // optional: ignore or show subtle thinking
+          // Thinking = new turn. Do not keep reading the previous reply.
+          if (!pendingSpeak) window.speechSynthesis?.cancel();
+          startThinkingCue();
         }
         if (msg.sessionId === activeSessionId) updateMeta();
         else renderTabs();
         break;
       }
       case "turn_complete": {
+        stopThinkingCue();
         const s = sessions.get(msg.sessionId);
         if (s) {
           s.busy = false;
@@ -652,7 +804,11 @@
             renderChat();
             updateMeta();
             if (pendingSpeak) {
-              speak(pendingSpeak);
+              const key = msg.sessionId + ":" + pendingSpeak.length + ":" + pendingSpeak.slice(0, 80);
+              if (key !== spokenTurnKey) {
+                spokenTurnKey = key;
+                speak(pendingSpeak);
+              }
               pendingSpeak = "";
             }
           } else {
@@ -699,6 +855,8 @@
     input.value = "";
     autosize();
     window.speechSynthesis?.cancel();
+    pendingSpeak = "";
+    startThinkingCue();
     ws.send(JSON.stringify({ type: "prompt", sessionId: s.sessionId, text }));
   }
 
@@ -738,6 +896,8 @@
 
   cancelBtn.onclick = () => {
     const s = getActive();
+    stopThinkingCue();
+    window.speechSynthesis?.cancel();
     if (s && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "cancel", sessionId: s.sessionId }));
     }
@@ -749,6 +909,15 @@
     const title = projectSelect.selectedOptions[0]?.textContent || "Session";
     ws.send(JSON.stringify({ type: "new_session", cwd, title }));
   };
+  if (showAllSessionsBtn) {
+    showAllSessionsBtn.onclick = () => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({ type: "list_sessions", showAll: true, all: true }));
+    };
+  }
+  if (pickerNewSessionBtn) {
+    pickerNewSessionBtn.onclick = () => newSessionBtn.onclick();
+  }
 
   ttsToggle.onclick = () => {
     ttsOn = !ttsOn;
@@ -756,6 +925,20 @@
     setTtsUi();
     if (!ttsOn) window.speechSynthesis?.cancel();
   };
+
+  if (thinkBeepToggle) {
+    thinkBeepToggle.onclick = () => {
+      thinkBeepOn = !thinkBeepOn;
+      localStorage.setItem(THINK_BEEP_KEY, thinkBeepOn ? "1" : "0");
+      setThinkBeepUi();
+      if (thinkBeepOn) {
+        const s = getActive();
+        if (s && s.busy) startThinkingCue();
+      } else {
+        stopThinkingCue();
+      }
+    };
+  }
 
   if (ttsVoiceSelect) {
     ttsVoiceSelect.addEventListener("change", () => {

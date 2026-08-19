@@ -13,6 +13,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import unquote
 
 log = logging.getLogger("session_history")
 
@@ -25,6 +26,66 @@ TAG_RE = re.compile(r"</?[a-zA-Z_][\w:-]*(?:\s[^>]*)?>")
 
 def grok_home() -> Path:
     return Path(os.environ.get("GROK_HOME") or (Path.home() / ".grok"))
+
+
+def _decode_cwd_folder(name: str) -> str:
+    return unquote(name).replace("/", "\\") if os.name == "nt" else unquote(name)
+
+
+def list_on_disk_sessions(*, min_bytes: int = 200, limit: Optional[int] = None) -> list[dict[str, Any]]:
+    """Real Grok sessions on disk (not the config.json project list). Newest first."""
+    root = grok_home() / "sessions"
+    if not root.is_dir():
+        return []
+    found: list[dict[str, Any]] = []
+    for cwd_dir in root.iterdir():
+        if not cwd_dir.is_dir():
+            continue
+        cwd_fallback = _decode_cwd_folder(cwd_dir.name)
+        for sess in cwd_dir.iterdir():
+            if not sess.is_dir():
+                continue
+            hist = sess / "chat_history.jsonl"
+            try:
+                if not hist.is_file() or hist.stat().st_size < min_bytes:
+                    continue
+            except OSError:
+                continue
+            summary: dict[str, Any] = {}
+            sp = sess / "summary.json"
+            if sp.is_file():
+                try:
+                    summary = json.loads(sp.read_text(encoding="utf-8"))
+                except Exception:
+                    summary = {}
+            info = summary.get("info") if isinstance(summary.get("info"), dict) else {}
+            cwd = str(info.get("cwd") or cwd_fallback)
+            title = (
+                summary.get("generated_title")
+                or summary.get("session_summary")
+                or Path(cwd).name
+                or sess.name[:8]
+            )
+            updated = summary.get("updated_at") or summary.get("last_active_at") or ""
+            mtime = hist.stat().st_mtime
+            nmsg = int(summary.get("num_chat_messages") or 0)
+            found.append(
+                {
+                    "sessionId": sess.name,
+                    "title": str(title),
+                    "cwd": cwd,
+                    "updatedAt": str(updated),
+                    "mtime": mtime,
+                    "messageCount": nmsg,
+                    "preview": str(summary.get("last_turn_summary") or "")[:140],
+                }
+            )
+    found.sort(key=lambda r: (r.get("updatedAt") or "", r.get("mtime") or 0), reverse=True)
+    for row in found:
+        row.pop("mtime", None)
+    if limit is None:
+        return found
+    return found[: max(1, int(limit))]
 
 
 def find_session_dir(session_id: str) -> Optional[Path]:

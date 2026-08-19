@@ -34,11 +34,20 @@
       <div class="top-actions">
         <select id="tts-voice" class="voice-select" title="TTS voice" aria-label="TTS voice"></select>
         <button id="tts-toggle" class="ghost" title="Read replies aloud">TTS on</button>
+        <button id="think-beep-toggle" class="ghost" title="Short beep while Grok is thinking">Beep off</button>
         <button id="new-session" class="ghost" title="New session">+ Session</button>
       </div>
     </header>
 
     <div id="session-tabs" class="tabs"></div>
+
+    <div id="session-picker" class="session-picker hidden">
+      <h2>Re-enter a session</h2>
+      <p class="muted small">Only the session you open is loaded. Unused threads stay on disk.</p>
+      <div id="session-picker-list"></div>
+      <button id="show-all-sessions" class="ghost">Show all sessions</button>
+      <button id="picker-new-session" class="ghost">New session</button>
+    </div>
 
     <main id="chat" class="chat" aria-live="polite"></main>
 
@@ -61,6 +70,6 @@
   <!-- cache-bust when UI changes; marked optional, app.js has a built-in fallback -->
   <script src="/static/vendor/marked.min.js?v=2"></script>
   <script src="/static/vendor/purify.min.js?v=2"></script>
-  <script src="/static/app.js?v=3"></script>
+  <script src="/static/app.js?v=5"></script>
 </body>
 </html>

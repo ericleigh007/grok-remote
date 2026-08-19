@@ -47,6 +47,16 @@ data class SessionState(
 data class ProjectOption(
     val name: String,
     val cwd: String,
+    val sessionId: String? = null,
+)
+
+data class AvailableSession(
+    val title: String,
+    val cwd: String,
+    val sessionId: String? = null,
+    val updatedAt: String? = null,
+    val messageCount: Int = 0,
+    val preview: String? = null,
 )
 
 data class ConnectionConfig(
@@ -65,6 +75,7 @@ data class UiState(
     val defaultCwd: String = "",
     val draft: String = "",
     val ttsEnabled: Boolean = true,
+    val thinkingSoundEnabled: Boolean = false,
     val ttsVoices: List<VoiceOption> = emptyList(),
     val selectedVoiceName: String? = null,
     val showVoicePicker: Boolean = false,
@@ -73,6 +84,11 @@ data class UiState(
     val agentTransport: String? = null,
     val errorBanner: String? = null,
     val needsPairing: Boolean = true,
+    val availableSessions: List<AvailableSession> = emptyList(),
+    val availableTotal: Int = 0,
+    val catalogTruncated: Boolean = false,
+    val showSessionPicker: Boolean = false,
+    val openingSession: Boolean = false,
 ) {
     val active: SessionState?
         get() = activeSessionId?.let { sessions[it] }

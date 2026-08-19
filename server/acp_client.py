@@ -632,6 +632,13 @@ class AcpClient:
         params = msg.get("params") or {}
         req_id = msg["id"]
         try:
+            if method in ("_x.ai/ask_user_question", "ask_user_question"):
+                # Unattended remote: no picker. Empty answers lets the turn continue
+                # instead of hanging until the 1h prompt timeout.
+                log.info("ask_user_question skipped (unattended remote)")
+                await self._respond(req_id, {"answers": []})
+                return
+
             if method == "session/request_permission":
                 result = {
                     "outcome": {"outcome": "selected", "optionId": "allow-once"}

@@ -33,6 +33,15 @@ class Prefs(context: Context) {
         get() = prefs.getString(KEY_TTS_VOICE, "") ?: ""
         set(v) = prefs.edit().putString(KEY_TTS_VOICE, v).apply()
 
+    /** Short beep while the model is thinking. Off by default. */
+    var thinkingSoundEnabled: Boolean
+        get() = prefs.getBoolean(KEY_THINKING_SOUND, false)
+        set(v) = prefs.edit().putBoolean(KEY_THINKING_SOUND, v).apply()
+
+    var lastSessionId: String
+        get() = prefs.getString(KEY_LAST_SESSION, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_LAST_SESSION, v).apply()
+
     fun clearPairing() {
         prefs.edit().remove(KEY_BASE).remove(KEY_TOKEN).apply()
     }
@@ -44,5 +53,7 @@ class Prefs(context: Context) {
         private const val KEY_TOKEN = "token"
         private const val KEY_TTS = "tts"
         private const val KEY_TTS_VOICE = "tts_voice"
+        private const val KEY_THINKING_SOUND = "thinking_sound"
+        private const val KEY_LAST_SESSION = "last_session"
     }
 }

@@ -38,6 +38,8 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RecordVoiceOver
@@ -65,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.xai.grokremote.data.AvailableSession
 import com.xai.grokremote.data.ConnState
 import com.xai.grokremote.data.TimelineItem
 import com.xai.grokremote.data.UiState
@@ -105,23 +108,36 @@ fun ChatScreen(state: UiState, vm: GrokViewModel) {
         SessionTabs(state, vm)
         StatusStrip(state)
         HorizontalDivider(color = Panel2.copy(alpha = 0.8f), thickness = 1.dp)
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            val items = active?.items.orEmpty()
-            if (items.isEmpty()) {
-                item { EmptyState() }
+        val showPicker = state.showSessionPicker || (active == null && !state.openingSession)
+        if (showPicker) {
+            SessionPicker(state, vm, Modifier.weight(1f))
+        } else {
+            if (state.openingSession) {
+                Text(
+                    "Opening session…",
+                    color = Muted,
+                    modifier = Modifier.padding(16.dp),
+                    fontSize = 13.sp,
+                )
             }
-            items(items, key = { it.id }) { item ->
-                TimelineRow(item, onToggleThought = { vm.toggleThought(item.id) })
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                val items = active?.items.orEmpty()
+                if (items.isEmpty() && !state.openingSession) {
+                    item { EmptyState() }
+                }
+                items(items, key = { it.id }) { item ->
+                    TimelineRow(item, onToggleThought = { vm.toggleThought(item.id) })
+                }
             }
+            Composer(state, vm)
         }
-        Composer(state, vm)
     }
 
     if (state.showVoicePicker) {
@@ -132,6 +148,91 @@ fun ChatScreen(state: UiState, vm: GrokViewModel) {
             onPreview = { vm.previewSelectedVoice() },
             onDismiss = { vm.dismissVoicePicker() },
         )
+    }
+}
+
+@Composable
+private fun SessionPicker(state: UiState, vm: GrokViewModel, modifier: Modifier = Modifier) {
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Text("Re-enter a session", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text(
+                "Only the session you open is loaded. Nothing else is resumed in the background.",
+                color = Muted,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+            )
+        }
+        items(state.availableSessions, key = { it.sessionId ?: "${it.cwd}-${it.title}" }) { item ->
+            SessionPickRow(item, onClick = { vm.enterAvailable(item) })
+        }
+        item {
+            val hidden = (state.availableTotal - state.availableSessions.size).coerceAtLeast(0)
+            if (state.catalogTruncated || hidden > 0) {
+                Surface(
+                    onClick = { vm.showAllSessions() },
+                    color = Panel2,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Accent.copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        if (hidden > 0) "Show all sessions ($hidden more)" else "Show all sessions",
+                        color = Accent,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(14.dp),
+                    )
+                }
+            }
+        }
+        item {
+            Surface(
+                onClick = { vm.newSession() },
+                color = Panel,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, Panel2),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "New session",
+                    color = TextPrimary,
+                    modifier = Modifier.padding(14.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionPickRow(item: AvailableSession, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = Panel,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Panel2),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(item.title, color = TextPrimary, fontWeight = FontWeight.SemiBold, maxLines = 2)
+            val cwdShort = item.cwd.substringAfterLast('\\').substringAfterLast('/')
+            val meta = buildString {
+                if (cwdShort.isNotBlank()) append(cwdShort)
+                if (item.messageCount > 0) {
+                    if (isNotEmpty()) append(" · ")
+                    append("${item.messageCount} msgs")
+                }
+            }
+            if (meta.isNotBlank()) {
+                Text(meta, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            item.preview?.takeIf { it.isNotBlank() }?.let {
+                Text(it, color = Muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
     }
 }
 
@@ -157,71 +258,92 @@ private fun EmptyState() {
 
 @Composable
 private fun TopBar(state: UiState, vm: GrokViewModel) {
-    Row(
+    Column(
         Modifier
             .fillMaxWidth()
             .background(Panel)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 6.dp),
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                "Grok Build",
-                fontWeight = FontWeight.SemiBold,
-                color = TextPrimary,
-                fontSize = 17.sp,
-            )
-            Text(
-                "Remote · ${state.connDetail.ifBlank { "…" }}",
-                color = Muted,
-                fontSize = 11.sp,
-            )
-        }
-        // Voice chip
-        Surface(
-            onClick = { vm.openVoicePicker() },
-            color = Panel2,
-            shape = RoundedCornerShape(999.dp),
-            border = BorderStroke(1.dp, if (state.ttsEnabled) Accent.copy(alpha = 0.45f) else Panel2),
+        Text(
+            "Grok Remote",
+            fontWeight = FontWeight.SemiBold,
+            color = TextPrimary,
+            fontSize = 17.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
+        )
+        Text(
+            state.connDetail.ifBlank { "…" },
+            color = Muted,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End,
         ) {
-            Row(
-                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            Surface(
+                onClick = { vm.openVoicePicker() },
+                color = Panel2,
+                shape = RoundedCornerShape(999.dp),
+                border = BorderStroke(1.dp, if (state.ttsEnabled) Accent.copy(alpha = 0.45f) else Panel2),
             ) {
+                Row(
+                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        Icons.Default.RecordVoiceOver,
+                        contentDescription = "Voice",
+                        tint = if (state.ttsEnabled) Accent else Muted,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = shortVoiceLabel(state.selectedVoiceLabel),
+                        color = TextPrimary,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 120.dp),
+                    )
+                }
+            }
+            IconButton(onClick = { vm.toggleTts() }, modifier = Modifier.size(40.dp)) {
                 Icon(
-                    Icons.Default.RecordVoiceOver,
-                    contentDescription = "Voice",
+                    if (state.ttsEnabled) {
+                        Icons.AutoMirrored.Filled.VolumeUp
+                    } else {
+                        Icons.AutoMirrored.Filled.VolumeOff
+                    },
+                    contentDescription = "TTS on/off",
                     tint = if (state.ttsEnabled) Accent else Muted,
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    text = shortVoiceLabel(state.selectedVoiceLabel),
-                    color = TextPrimary,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 96.dp),
                 )
             }
-        }
-        Spacer(Modifier.width(4.dp))
-        IconButton(onClick = { vm.toggleTts() }) {
-            Icon(
-                if (state.ttsEnabled) {
-                    Icons.AutoMirrored.Filled.VolumeUp
-                } else {
-                    Icons.AutoMirrored.Filled.VolumeOff
-                },
-                contentDescription = "TTS on/off",
-                tint = if (state.ttsEnabled) Accent else Muted,
-            )
-        }
-        IconButton(onClick = { vm.newSession() }) {
-            Icon(Icons.Default.Add, contentDescription = "New session", tint = TextPrimary)
-        }
-        IconButton(onClick = { vm.unpair() }) {
-            Icon(Icons.Default.LinkOff, contentDescription = "Unpair", tint = Muted)
+            IconButton(onClick = { vm.toggleThinkingSound() }, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    if (state.thinkingSoundEnabled) {
+                        Icons.Default.NotificationsActive
+                    } else {
+                        Icons.Default.NotificationsOff
+                    },
+                    contentDescription = if (state.thinkingSoundEnabled) {
+                        "Thinking beep on"
+                    } else {
+                        "Thinking beep off"
+                    },
+                    tint = if (state.thinkingSoundEnabled) Accent else Muted,
+                )
+            }
+            IconButton(onClick = { vm.newSession() }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Add, contentDescription = "New session", tint = TextPrimary)
+            }
+            IconButton(onClick = { vm.unpair() }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.LinkOff, contentDescription = "Unpair", tint = Muted)
+            }
         }
     }
 }
@@ -294,6 +416,23 @@ private fun SessionTabs(state: UiState, vm: GrokViewModel) {
             .padding(horizontal = 10.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        FilterChip(
+            selected = state.showSessionPicker,
+            onClick = { vm.openSessionPicker() },
+            label = { Text("Sessions") },
+            colors = FilterChipDefaults.filterChipColors(
+                containerColor = Panel2,
+                labelColor = Muted,
+                selectedContainerColor = Accent.copy(alpha = 0.18f),
+                selectedLabelColor = TextPrimary,
+            ),
+            border = FilterChipDefaults.filterChipBorder(
+                enabled = true,
+                selected = state.showSessionPicker,
+                borderColor = Panel2,
+                selectedBorderColor = Accent.copy(alpha = 0.5f),
+            ),
+        )
         state.sessions.values.forEach { s ->
             val selected = s.sessionId == state.activeSessionId
             FilterChip(

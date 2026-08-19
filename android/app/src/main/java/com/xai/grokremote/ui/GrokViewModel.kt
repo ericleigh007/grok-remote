@@ -31,12 +31,16 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
         UiState(
             needsPairing = !prefs.hasPairing(),
             ttsEnabled = prefs.ttsEnabled,
+            thinkingSoundEnabled = prefs.thinkingSoundEnabled,
             selectedVoiceName = prefs.ttsVoiceName.ifBlank { null },
         ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private var reconnectJob: Job? = null
+    private var thinkingCueJob: Job? = null
+    /** Assistant bubble already spoken for a session — avoid re-reading it while the next turn thinks. */
+    private val spokenAssistantIds = mutableMapOf<String, String>()
 
     init {
         speech.onVoicesReady = { voices ->
@@ -129,7 +133,11 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
         prefs.clearPairing()
         bridge.disconnect()
         _state.update {
-            UiState(needsPairing = true, ttsEnabled = prefs.ttsEnabled)
+            UiState(
+                needsPairing = true,
+                ttsEnabled = prefs.ttsEnabled,
+                thinkingSoundEnabled = prefs.thinkingSoundEnabled,
+            )
         }
     }
 
@@ -146,7 +154,45 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectSession(id: String) {
-        _state.update { it.copy(activeSessionId = id) }
+        if (_state.value.sessions.containsKey(id)) {
+            prefs.lastSessionId = id
+            _state.update { it.copy(activeSessionId = id, showSessionPicker = false) }
+            return
+        }
+        val avail = _state.value.availableSessions.firstOrNull { it.sessionId == id }
+        if (avail?.sessionId != null) {
+            enterAvailable(avail)
+        }
+    }
+
+    fun enterAvailable(item: com.xai.grokremote.data.AvailableSession) {
+        _state.update { it.copy(openingSession = true, showSessionPicker = false, errorBanner = null) }
+        if (!item.sessionId.isNullOrBlank()) {
+            if (_state.value.sessions.containsKey(item.sessionId)) {
+                prefs.lastSessionId = item.sessionId
+                _state.update {
+                    it.copy(activeSessionId = item.sessionId, openingSession = false)
+                }
+                return
+            }
+            bridge.openSession(item.sessionId, item.cwd, item.title)
+        } else {
+            bridge.newSession(item.cwd, item.title)
+        }
+    }
+
+    fun openSessionPicker() {
+        _state.update { it.copy(showSessionPicker = true) }
+    }
+
+    fun dismissSessionPicker() {
+        if (_state.value.sessions.isNotEmpty()) {
+            _state.update { it.copy(showSessionPicker = false) }
+        }
+    }
+
+    fun showAllSessions() {
+        bridge.listSessions(showAll = true)
     }
 
     fun toggleThought(itemId: String) {
@@ -175,6 +221,7 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
         if (text.isEmpty()) return
         val session = st.sessions[sid] ?: return
         speech.stopSpeaking()
+        stopThinkingCue()
         _state.update { it.copy(draft = "") }
 
         // Optimistic user bubble
@@ -189,10 +236,13 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             bridge.sendPrompt(sid, text)
         }
+        startThinkingCue()
     }
 
     fun cancel() {
         val sid = _state.value.activeSessionId ?: return
+        stopThinkingCue()
+        speech.stopSpeaking()
         bridge.cancel(sid)
         markNotBusy(sid)
     }
@@ -209,6 +259,20 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
         prefs.ttsEnabled = next
         if (!next) speech.stopSpeaking()
         _state.update { it.copy(ttsEnabled = next) }
+    }
+
+    fun toggleThinkingSound() {
+        val next = !_state.value.thinkingSoundEnabled
+        prefs.thinkingSoundEnabled = next
+        _state.update { it.copy(thinkingSoundEnabled = next) }
+        if (next) {
+            val sid = _state.value.activeSessionId
+            if (sid != null && _state.value.sessions[sid]?.busy == true && !assistantStartedThisTurn(sid)) {
+                startThinkingCue()
+            }
+        } else {
+            stopThinkingCue()
+        }
     }
 
     fun openVoicePicker() {
@@ -298,14 +362,43 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
         when (ev) {
             is BridgeEvent.Hello -> {
                 val map = ev.sessions.associateBy { it.sessionId }
+                val last = prefs.lastSessionId.ifBlank { ev.lastSessionId ?: "" }
+                val lastLive = last.takeIf { it.isNotBlank() && it in map }
+                val lastAvail = ev.available.firstOrNull { it.sessionId == last }
+                    ?: last.takeIf { it.isNotBlank() }?.let {
+                        com.xai.grokremote.data.AvailableSession(
+                            title = "Last session",
+                            cwd = ev.defaultCwd,
+                            sessionId = it,
+                        )
+                    }
                 _state.update {
                     it.copy(
                         sessions = map,
-                        activeSessionId = it.activeSessionId?.takeIf { id -> id in map }
-                            ?: map.keys.firstOrNull(),
+                        availableSessions = ev.available,
+                        availableTotal = ev.availableTotal,
+                        catalogTruncated = ev.catalogTruncated,
                         projects = ev.projects,
                         defaultCwd = ev.defaultCwd,
                         needsPairing = false,
+                        activeSessionId = lastLive
+                            ?: it.activeSessionId?.takeIf { id -> id in map }
+                            ?: map.keys.firstOrNull(),
+                        showSessionPicker = lastLive == null && lastAvail == null && map.isEmpty(),
+                        openingSession = lastLive == null && lastAvail != null,
+                    )
+                }
+                if (lastLive == null && lastAvail != null) {
+                    enterAvailable(lastAvail)
+                }
+            }
+            is BridgeEvent.SessionCatalog -> {
+                _state.update {
+                    it.copy(
+                        availableSessions = ev.available,
+                        availableTotal = ev.availableTotal,
+                        catalogTruncated = ev.catalogTruncated,
+                        showSessionPicker = true,
                     )
                 }
             }
@@ -318,10 +411,13 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                     busy = existing?.busy ?: false,
                     items = if (ev.messages.isNotEmpty()) ev.messages else existing?.items.orEmpty(),
                 )
+                prefs.lastSessionId = ev.sessionId
                 _state.update {
                     it.copy(
                         sessions = it.sessions + (ev.sessionId to session),
-                        activeSessionId = it.activeSessionId ?: ev.sessionId,
+                        activeSessionId = ev.sessionId,
+                        showSessionPicker = false,
+                        openingSession = false,
                     )
                 }
             }
@@ -340,9 +436,15 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             is BridgeEvent.AssistantChunk -> {
+                stopThinkingCue()
                 appendStream(ev.sessionId, kind = "assistant", chunk = ev.text)
             }
             is BridgeEvent.ThoughtChunk -> {
+                // New thinking = a new turn. Stop leftover TTS of the previous reply.
+                if (!assistantStartedThisTurn(ev.sessionId)) {
+                    speech.stopSpeaking()
+                    startThinkingCue()
+                }
                 appendStream(ev.sessionId, kind = "thought", chunk = ev.text)
             }
             is BridgeEvent.ToolCall -> {
@@ -375,13 +477,10 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             is BridgeEvent.TurnComplete -> {
+                stopThinkingCue()
                 finalizeStreams(ev.sessionId)
                 markBusy(ev.sessionId, false)
-                if (_state.value.ttsEnabled) {
-                    val s = _state.value.sessions[ev.sessionId]
-                    val lastAssistant = s?.items?.lastOrNull { it is TimelineItem.Assistant } as? TimelineItem.Assistant
-                    lastAssistant?.text?.let { speech.speak(it) }
-                }
+                maybeSpeakThisTurn(ev.sessionId)
             }
             is BridgeEvent.AgentStatus -> {
                 _state.update {
@@ -393,7 +492,13 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             is BridgeEvent.Error -> {
-                _state.update { it.copy(errorBanner = ev.message) }
+                _state.update {
+                    it.copy(
+                        errorBanner = ev.message,
+                        openingSession = false,
+                        showSessionPicker = it.sessions.isEmpty() || it.showSessionPicker,
+                    )
+                }
                 ev.sessionId?.let { markBusy(it, false) }
             }
             BridgeEvent.AuthFailed -> {
@@ -401,6 +506,51 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(errorBanner = "Invalid token — re-pair from PC /pair QR") }
             }
         }
+    }
+
+    private fun startThinkingCue() {
+        if (!_state.value.thinkingSoundEnabled) return
+        if (thinkingCueJob?.isActive == true) return
+        thinkingCueJob = viewModelScope.launch {
+            delay(2_500)
+            while (isActive) {
+                if (!_state.value.thinkingSoundEnabled) break
+                val sid = _state.value.activeSessionId ?: break
+                val busy = _state.value.sessions[sid]?.busy == true
+                if (!busy || assistantStartedThisTurn(sid)) break
+                speech.playThinkingBeep()
+                delay(10_000)
+            }
+        }
+    }
+
+    private fun stopThinkingCue() {
+        thinkingCueJob?.cancel()
+        thinkingCueJob = null
+    }
+
+    private fun assistantStartedThisTurn(sessionId: String): Boolean {
+        val s = _state.value.sessions[sessionId] ?: return false
+        val lastUser = s.items.indexOfLast { it is TimelineItem.User }
+        if (lastUser < 0) return false
+        return s.items.drop(lastUser + 1).any { it is TimelineItem.Assistant && it.text.isNotBlank() }
+    }
+
+    /** Speak only the reply after the latest user message, once. Never re-read an older bubble. */
+    private fun maybeSpeakThisTurn(sessionId: String) {
+        if (!_state.value.ttsEnabled) return
+        val s = _state.value.sessions[sessionId] ?: return
+        val lastUser = s.items.indexOfLast { it is TimelineItem.User }
+        if (lastUser < 0) return
+        val reply = s.items
+            .drop(lastUser + 1)
+            .filterIsInstance<TimelineItem.Assistant>()
+            .lastOrNull()
+            ?: return
+        if (reply.text.isBlank()) return
+        if (spokenAssistantIds[sessionId] == reply.id) return
+        spokenAssistantIds[sessionId] = reply.id
+        speech.speak(reply.text)
     }
 
     private fun appendStream(sessionId: String, kind: String, chunk: String) {

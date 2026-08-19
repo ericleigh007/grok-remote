@@ -23,10 +23,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from acp_client import AcpClient
+from session_history import list_on_disk_sessions
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB_DIR = ROOT / "web"
 CONFIG_PATH = ROOT / "config.json"
+LAST_SESSION_PATH = ROOT / "last-session.json"
 RELEASES_DIR = ROOT / "releases"
 # Preferred published names + gradle debug output fallback
 APK_PUBLISHED = RELEASES_DIR / "grok-remote.apk"
@@ -119,42 +121,98 @@ async def on_agent_event(event: dict[str, Any]) -> None:
     await broadcast(event)
 
 
+def _read_last_session() -> Optional[dict[str, Any]]:
+    if not LAST_SESSION_PATH.is_file():
+        return None
+    try:
+        data = json.loads(LAST_SESSION_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("sessionId"):
+            return data
+    except Exception:
+        log.warning("Could not read %s", LAST_SESSION_PATH)
+    return None
+
+
+def _write_last_session(info: Any) -> None:
+    try:
+        LAST_SESSION_PATH.write_text(
+            json.dumps(
+                {
+                    "sessionId": info.session_id,
+                    "title": info.title,
+                    "cwd": info.cwd,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        log.warning("Could not write %s", LAST_SESSION_PATH)
+
+
+def _session_aliases() -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for proj in CONFIG.get("projects") or []:
+        sid = proj.get("session_id") or proj.get("sessionId")
+        name = proj.get("name")
+        if sid and name:
+            aliases[str(sid)] = str(name)
+    return aliases
+
+
+def session_catalog(*, include_empty: bool = False, limit: Optional[int] = None) -> list[dict[str, Any]]:
+    """On-disk Grok sessions. Config names are labels only — not a whitelist."""
+    items = list_on_disk_sessions(
+        min_bytes=0 if include_empty else 200,
+        limit=limit,
+    )
+    aliases = _session_aliases()
+    for item in items:
+        sid = item.get("sessionId")
+        if sid in aliases:
+            item["title"] = aliases[sid]
+    return items
+
+
+def session_catalog_meta() -> dict[str, Any]:
+    full = session_catalog(include_empty=True, limit=None)
+    recent = session_catalog(include_empty=False, limit=30)
+    return {
+        "availableSessions": recent,
+        "availableTotal": len(full),
+        "catalogTruncated": len(full) > len(recent),
+    }
+
+
+async def open_named_session(
+    *,
+    session_id: Optional[str],
+    cwd: Optional[str],
+    title: Optional[str],
+    replay: bool = False,
+):
+    cwd_path = cwd or CONFIG.get("default_cwd") or str(ROOT)
+    if session_id and session_id in agent.sessions:
+        info = agent.sessions[session_id]
+        _write_last_session(info)
+        return info
+    if session_id:
+        info = await agent.load_session(session_id, cwd_path, title=title, replay=replay)
+    else:
+        info = await agent.create_session(cwd_path, title=title)
+    _write_last_session(info)
+    return info
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     agent.on_event(on_agent_event)
     log.info("Starting Grok ACP agent…")
     await agent.start()
-    # Open configured projects. Prefer resume when session_id is set.
-    default_cwd = CONFIG["default_cwd"]
-    projects = list(CONFIG.get("projects") or [{"name": "main", "cwd": default_cwd}])
-    # No hard cap — open every configured project/session (UI tabs scale with this list).
-    for i, proj in enumerate(projects):
-        title = proj.get("name") or f"Session {i + 1}"
-        cwd = proj.get("cwd") or default_cwd
-        session_id = proj.get("session_id") or proj.get("sessionId")
-        replay = bool(proj.get("replay_history", False))
-        try:
-            if session_id:
-                await agent.load_session(
-                    session_id,
-                    cwd,
-                    title=title,
-                    replay=replay,
-                )
-                log.info("Resumed session %s (%s) @ %s", title, session_id, cwd)
-            else:
-                await agent.create_session(cwd, title=title)
-                log.info("Created session %s @ %s", title, cwd)
-        except Exception:
-            log.exception("Failed to open session %s", title)
-            # Still give the user a working tab on that project
-            try:
-                await agent.create_session(cwd, title=f"{title} (new)")
-            except Exception:
-                log.exception("Fallback create also failed for %s", title)
-    if not agent.sessions:
-        await agent.create_session(default_cwd, title="Session 1")
-    log.info("Holding %d session(s)", len(agent.sessions))
+    # Do not resume any project sessions here. Idle 1MB transcripts made every
+    # phone connect pay for work the user is not looking at. Clients open one
+    # session on demand (last-used, or a picker).
+    log.info("Agent ready — %d catalog entries, 0 sessions loaded", len(session_catalog()))
     yield
     await agent.stop()
 
@@ -279,7 +337,8 @@ async def ws_endpoint(websocket: WebSocket):
     async with clients_lock:
         clients.add(websocket)
 
-    # Snapshot current state
+    last = _read_last_session()
+    catalog = session_catalog_meta()
     await websocket.send_text(
         json.dumps(
             {
@@ -294,6 +353,10 @@ async def ws_endpoint(websocket: WebSocket):
                     }
                     for s in agent.sessions.values()
                 ],
+                "availableSessions": catalog["availableSessions"],
+                "availableTotal": catalog["availableTotal"],
+                "catalogTruncated": catalog["catalogTruncated"],
+                "lastSessionId": (last or {}).get("sessionId"),
                 "projects": CONFIG.get("projects", []),
                 "default_cwd": CONFIG.get("default_cwd"),
             },
@@ -323,40 +386,38 @@ async def ws_endpoint(websocket: WebSocket):
                     asyncio.create_task(_run_prompt(session_id, text))
                 elif mtype == "cancel":
                     await agent.cancel(msg["sessionId"])
-                elif mtype == "new_session":
-                    if msg.get("sessionId"):
-                        info = await agent.load_session(
-                            msg["sessionId"],
-                            msg.get("cwd") or CONFIG["default_cwd"],
-                            title=msg.get("title"),
-                            replay=bool(msg.get("replayHistory")),
+                elif mtype == "list_sessions":
+                    include_empty = bool(msg.get("all") or msg.get("showAll"))
+                    items = session_catalog(include_empty=include_empty, limit=None)
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "session_catalog",
+                                "availableSessions": items,
+                                "availableTotal": len(items),
+                                "catalogTruncated": False,
+                                "complete": True,
+                            },
+                            ensure_ascii=False,
                         )
-                        await websocket.send_text(
-                            json.dumps(
-                                {
-                                    "type": "session_loaded",
-                                    "sessionId": info.session_id,
-                                    "cwd": info.cwd,
-                                    "title": info.title,
-                                    "messages": info.messages,
-                                }
-                            )
-                        )
-                    else:
-                        info = await agent.create_session(
-                            msg.get("cwd") or CONFIG["default_cwd"],
-                            title=msg.get("title"),
-                        )
-                        await websocket.send_text(
-                            json.dumps(
-                                {
-                                    "type": "session_created",
-                                    "sessionId": info.session_id,
-                                    "cwd": info.cwd,
-                                    "title": info.title,
-                                }
-                            )
-                        )
+                    )
+                elif mtype in ("new_session", "open_session"):
+                    info = await open_named_session(
+                        session_id=msg.get("sessionId"),
+                        cwd=msg.get("cwd"),
+                        title=msg.get("title"),
+                        replay=bool(msg.get("replayHistory")),
+                    )
+                    kind = "session_loaded" if msg.get("sessionId") else "session_created"
+                    await broadcast(
+                        {
+                            "type": kind,
+                            "sessionId": info.session_id,
+                            "cwd": info.cwd,
+                            "title": info.title,
+                            "messages": info.messages,
+                        }
+                    )
                 elif mtype == "ping":
                     await websocket.send_text(json.dumps({"type": "pong"}))
                 else:
