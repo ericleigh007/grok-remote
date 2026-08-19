@@ -57,6 +57,7 @@ if (-not (Test-Path $grokExe)) {
 if (-not (Test-Path $grokExe)) { throw "grok.exe not found. Install Grok Build and log in first." }
 
 Write-Host "Compiling user-token helper..."
+if (Test-Path $DllPath) { Remove-Item $DllPath -Force }
 Add-Type -Path $CsPath -OutputAssembly $DllPath -ErrorAction Stop
 if (-not (Test-Path $DllPath)) { throw "Failed to compile $DllPath" }
 
