@@ -64,9 +64,9 @@ Grok Remote is that remote: a small PC bridge + Android app (and a web fallback)
 ┌─────────────────────┐         encrypted mesh          ┌──────────────────────────────┐
 │  Android app        │ ──────────────────────────────► │  Your PC                     │
 │  (or mobile browser)│   e.g. Tailscale HTTPS          │                              │
-│                     │   https://pc…ts.net/            │  Scheduled tasks:            │
-│  • QR pair          │                                 │   • GrokAgentServe  :2419    │
-│  • chat / think     │                                 │   • GrokRemoteBridge :8787   │
+│                     │   https://pc…ts.net/            │  Windows service GrokRemote: │
+│  • QR pair          │                                 │   LocalSystem supervisor     │
+│  • chat / think     │                                 │   children as your user      │
 │  • tools / voice    │                                 │                              │
 │  • cancel / inject  │                                 │  grok agent serve  (ACP/WS)  │
 └─────────────────────┘                                 │         ▲                    │
@@ -83,7 +83,8 @@ Grok Remote is that remote: a small PC bridge + Android app (and a web fallback)
 2. **Agent secret** — `grok agent serve --secret` binds to **localhost**. The phone never talks to port `2419`.  
 3. **Bridge token** — phone authenticates to `:8787` with a long random `remote_token`.  
 4. **`/pair` is loopback-only** — QR (and token) are generated on the PC display; Tailscale clients get **403** on `/pair`.  
-5. **Grok credentials stay on the PC** — OAuth / API key never leave the machine.
+5. **Grok credentials stay on the PC** — OAuth / API key never leave the machine.  
+6. **Service identity** — the **GrokRemote** service runs as **LocalSystem** only as a supervisor (restart + port watch). `grok agent serve` and the Python bridge are launched **as the installing Windows user** via S4U or your interactive session token (`CreateProcessAsUser`). **No Windows password is stored.** Opt into scheduled tasks instead if you do not want a service (`-UseScheduledTasks`).
 
 ---
 
@@ -115,7 +116,7 @@ That will:
 - Copy the bridge into `%LOCALAPPDATA%\GrokRemote` (or install **in-place** if you run `.\install.ps1` from a git clone)
 - Create a venv and `pip install` the server
 - Write `config.json` with fresh `remote_token` / `agent_secret` (existing config is left alone)
-- Register the **GrokAgentServe** and **GrokRemoteBridge** scheduled tasks and start them
+- Install the **GrokRemote** Windows service (LocalSystem supervisor; grok + bridge as your user, no stored password) plus a 1-minute SYSTEM watchdog
 - Place the Android APK under `releases/` so the phone can fetch it from `/dl`
 
 Or download `grok-remote-pc.zip` from the [latest release](https://github.com/ericleigh007/grok-remote/releases/latest), extract it, and run:
@@ -223,28 +224,42 @@ Web UI fallback (no APK): `https://YOUR-PC.YOUR-TAILNET.ts.net/` in Chrome. Voic
 
 > `always_approve` matches unattended remote use. Deny rules / hooks on the Grok side still apply. Treat tokens like full agent keys for this machine.
 
-`install.ps1` already registered these logon tasks. Re-run only if you moved the install or want a clean register:
+### Reliability (Windows service)
+
+v0.2+ replaces brittle at-logon scheduled tasks with a **Windows service**. Task Scheduler “restart on failure” only fires when the *task wrapper* exits with an error. If the wrapper died while the child kept the port, a restart saw “port already open” and **exited 0** — then nothing was watching when the orphan later died. That is how a 502 could sit for days on a PC that never sleeps.
+
+Default install:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass -File .\install-startup.ps1
 ```
 
-| Task | Role |
-|------|------|
-| **GrokAgentServe** | `grok agent --always-approve serve` on `127.0.0.1:2419` |
-| **GrokRemoteBridge** | Phone/web bridge on `:8787` → ACP WebSocket to the agent |
+(UAC once.) That provides:
 
-Manual restart later:
+| Piece | Role |
+|-------|------|
+| **GrokRemote** service | LocalSystem supervisor (`supervise.ps1`). SCM restarts it on crash (3s / 3s / 3s). Auto-start (delayed). |
+| Children | `grok agent serve` (:2419) and the Python bridge (:8787) run **as your user**. Token via MSV1_0 S4U or your logon session. **No password on disk.** |
+| **GrokRemoteWatchdog** | SYSTEM scheduled task every 1 minute: if :2419/:8787 or `/api/health` is dead, start/restart the service. Catches hung-but-alive processes SCM would miss. |
+
+Restart / status:
 
 ```powershell
-schtasks /Run /TN GrokAgentServe
-schtasks /Run /TN GrokRemoteBridge
+Get-Service GrokRemote
+Restart-Service GrokRemote
+Get-Content .\logs\supervisor.log -Tail 40
 ```
 
-Uninstall tasks (does not delete files):
+Opt-in scheduled tasks (same supervisor, S4U, still no stored password) if you do not want a service:
 
 ```powershell
-.\uninstall-startup.ps1
+pwsh -ExecutionPolicy Bypass -File .\install-startup.ps1 -UseScheduledTasks
+```
+
+Uninstall (service + watchdog + leftover tasks, not files):
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File .\uninstall-startup.ps1
 ```
 
 ### Tailscale (remote path)
@@ -397,7 +412,9 @@ grok-remote/
   android/          # Compose app (optional — APK is on Releases)
   scripts/          # SDK install, APK publish, package-release
   config.example.json
-  install-startup.ps1   # registers GrokAgentServe + GrokRemoteBridge
+  install-startup.ps1   # Windows service (default) or -UseScheduledTasks
+  supervise.ps1         # owns agent :2419 + bridge :8787; never exits
+  tools/UserProcess.cs  # S4U / session token, CreateProcessAsUser
   start-agent-serve.ps1
   start-background.ps1
   docs/images/      # optional screenshots for this README
@@ -416,6 +433,7 @@ grok-remote/
 | Empty history in app | `history_limit` in config; session UUID must match on-disk Grok session |
 | Mic fails in browser | Use HTTPS Serve URL + Chrome; or use the native app STT |
 | Bad TTS voice | App top bar → voice chip → pick Neural/Natural/cloud voice |
+| Phone 502 / cannot reach host | Tailscale is up but the PC bridge was down. `Get-Service GrokRemote`; `Restart-Service GrokRemote`; `Get-Content logs\supervisor.log -Tail 40`. Watchdog should recover within a minute. |
 | APK install blocked / greyed out | **Samsung Auto Blocker** off; allow unknown apps for Chrome/Files; Play Protect → Install anyway |
 | “Unknown apps” loop | You allowed the wrong app — enable it for the app that opened the APK (Chrome vs Files vs My Files) |
 

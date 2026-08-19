@@ -61,6 +61,8 @@ $names = @(
   "start.ps1",
   "enable-tailscale-https.ps1",
   "watchdog.ps1",
+  "supervise.ps1",
+  "tools",
   "VERSION",
   "README.md"
 )
@@ -72,6 +74,10 @@ foreach ($name in $names) {
 
 # Strip Python caches copied from server/
 Get-ChildItem (Join-Path $Stage "server") -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
+$stageTools = Join-Path $Stage "tools"
+if (Test-Path $stageTools) {
+  Get-ChildItem $stageTools -File | Where-Object { $_.Extension -match '\.(exe|dll|json|xml)$' } | Remove-Item -Force
+}
 
 Copy-Item $apkSrc $ApkOut -Force
 Copy-Item $apkSrc (Join-Path $Stage "releases\grok-remote.apk") -Force

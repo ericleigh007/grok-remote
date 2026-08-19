@@ -1,4 +1,5 @@
-# Install the Grok Remote PC piece: Python bridge + grok agent serve tasks.
+# Install the Grok Remote PC piece: Python bridge + grok agent serve.
+# Default: Windows service (LocalSystem supervisor; children as your user, no password).
 # Works three ways:
 #   1) From a clone or extracted zip:
 #        pwsh -ExecutionPolicy Bypass -File .\install.ps1
@@ -16,7 +17,8 @@ param(
   [switch]$InPlace,
   [switch]$SkipApk,
   [switch]$SkipTasks,
-  [switch]$SkipPythonInstall
+  [switch]$SkipPythonInstall,
+  [switch]$UseScheduledTasks
 )
 
 $ErrorActionPreference = "Stop"
@@ -86,7 +88,7 @@ function Install-Python {
 }
 
 function Test-LooksLikeTree([string]$Dir) {
-  return (Test-Path (Join-Path $Dir "server\main.py")) -and (Test-Path (Join-Path $Dir "start-background.ps1"))
+  return (Test-Path (Join-Path $Dir "server\main.py")) -and (Test-Path (Join-Path $Dir "supervise.ps1"))
 }
 
 function Get-ScriptHome {
@@ -121,6 +123,7 @@ function Copy-Tree([string]$Source, [string]$Dest) {
     "start.ps1",
     "enable-tailscale-https.ps1",
     "watchdog.ps1",
+    "supervise.ps1",
     "VERSION",
     "README.md"
   )
@@ -137,6 +140,11 @@ function Copy-Tree([string]$Source, [string]$Dest) {
   }
   $rel = Join-Path $Dest "releases"
   New-Item -ItemType Directory -Force -Path $rel | Out-Null
+  $cs = Join-Path $Source "tools\UserProcess.cs"
+  if (Test-Path $cs) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $Dest "tools") | Out-Null
+    Copy-Item $cs (Join-Path $Dest "tools\UserProcess.cs") -Force
+  }
 }
 
 function Download-File([string]$Url, [string]$Dest) {
@@ -156,8 +164,8 @@ function Resolve-SourceTree {
   Download-File "$LatestBase/grok-remote-pc.zip" $zip
   $extract = Join-Path $tmp "extract"
   Expand-Archive -Path $zip -DestinationPath $extract -Force
-  $found = Get-ChildItem $extract -Recurse -Filter "start-background.ps1" | Select-Object -First 1
-  if (-not $found) { throw "Downloaded zip did not contain the PC tree (missing start-background.ps1)" }
+  $found = Get-ChildItem $extract -Recurse -Filter "supervise.ps1" | Select-Object -First 1
+  if (-not $found) { throw "Downloaded zip did not contain the PC tree (missing supervise.ps1)" }
   return $found.DirectoryName
 }
 
@@ -288,11 +296,13 @@ if (-not $SkipApk) {
 
 # --- scheduled tasks ---
 if (-not $SkipTasks) {
-  Write-Step "Registering logon tasks (GrokAgentServe + GrokRemoteBridge)"
+  Write-Step "Installing Windows service (LocalSystem supervisor, children as your user, no password)"
   $installStartup = Join-Path $Dest "install-startup.ps1"
   $pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
-  if (-not $pwsh) { throw "PowerShell 7 (pwsh) is required to register scheduled tasks." }
-  & $pwsh -NoProfile -ExecutionPolicy Bypass -File $installStartup
+  if (-not $pwsh) { throw "PowerShell 7 (pwsh) is required." }
+  $instArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $installStartup)
+  if ($UseScheduledTasks) { $instArgs += "-UseScheduledTasks" }
+  & $pwsh @instArgs
 } else {
   Write-Warn "Skipped scheduled tasks (-SkipTasks)"
 }

@@ -28,6 +28,10 @@ android/captures/
 releases/*.apk
 releases/latest.json
 dist/
+tools/*.exe
+tools/*.dll
+tools/GrokRemote.xml
+tools/service-user.json
 
 # OS / editor
 .DS_Store
