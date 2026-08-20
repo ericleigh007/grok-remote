@@ -8,7 +8,21 @@ Grok Remote is a thin, open-source remote for **your own machine**. It uses the 
 - Session resume / history that already lives under `~/.grok`  
 - Your existing login (OAuth or API key) on the PC  
 
-Nothing here patches or reimplements Grok. If it works in the desktop agent, it works here.
+Nothing here patches Grok. The bridge talks to stock `grok agent serve`. Unattended remote is not identical to the desktop TUI: `always_approve` is on by default, in-person prompts (`ask_user_question`) are skipped, and the phone only **opens a session when you pick it** (or re-enters the last one).
+
+---
+
+## What's new
+
+Newest first. This is the living project, not a marketing sheet. The last **tagged** GitHub Release zip is **v0.2.0** (Windows service). Session picker / on-demand load is on `master` and will ship in the next zip.
+
+| When | What actually changed |
+|------|------------------------|
+| **Now (v0.2+)** | **Windows service instead of logon scheduled tasks.** Task Scheduler only restarted when the *wrapper* exited with an error. If the wrapper died while Python/`grok` kept the port, a restart treated “port already open” as success and stopped watching — 502s for days on a PC that never sleeps. **GrokRemote** is now a delayed auto-start service: LocalSystem *supervisor only*; `grok agent serve` and the bridge run **as your user** via S4U (no password stored). SCM restarts the supervisor; a SYSTEM watchdog every minute force-starts it if `:2419` / `:8787` is dead. Opt-in: `install-startup.ps1 -UseScheduledTasks`. |
+| **Now** | **Sessions on demand.** Config `projects[]` is not a whitelist and is not auto-resumed at boot (that was leftover from the old stdio bridge). The picker lists real chats under `~/.grok/sessions`. Last-used session is re-entered; otherwise you pick. **Show all** lists every on-disk session — nothing is unreachable. Idle 1MB threads are *not* loaded in the background. |
+| **Now** | Phone UI: optional **thinking beep** (off by default), TTS no longer re-reads the previous reply while the model thinks, top bar no longer crushes the title into one-letter columns. |
+| **v0.2.0** | First GitHub **Release** zip: PC installer + prebuilt APK so you do not need Android Studio. |
+| **v0.1.x** | Public repo: Android client, `/pair` QR, `/dl` APK, Tailscale Serve path. |
 
 ---
 
@@ -47,14 +61,14 @@ Grok Remote is that remote: a small PC bridge + Android app (and a web fallback)
 
 | Feature | What you get |
 |---------|----------------|
-| **No Grok modifications** | Uses `grok agent serve` and ACP — stock xAI CLI support |
-| **Scheduled tasks** | Agent + bridge survive logon; not tied to a terminal window |
-| **`/pair` on the PC** | Loopback-only QR page; phone never fetches the secret URL as a page |
-| **QR login on Android** | Scan once; token stored in encrypted prefs |
-| **APK over the bridge** | PC `/pair` **Install** QR or phone `/dl` — no USB dance for updates |
-| **Multi-session** | Resume real Grok sessions (Flow, doorbell, …) with recent history in the UI |
-| **TUI-shaped stream** | Thinking, tools, markdown replies, cancel + midstream interrupt |
-| **STT / TTS** | System speech recognizer + system TTS with **voice picker** |
+| **No Grok modifications** | Uses `grok agent serve` and ACP — stock xAI CLI |
+| **Windows service** | Survives logoff/crash better than logon tasks; optional `-UseScheduledTasks` |
+| **`/pair` on the PC** | Loopback-only QR page; Tailscale clients get **403** on `/pair` |
+| **QR login on Android** | Scan once; token stored in EncryptedSharedPreferences |
+| **APK over the bridge** | PC `/pair` **Install** QR or phone `/dl` — no USB for updates |
+| **Sessions on demand** | Disk catalog + last-used / picker / **Show all**; unused sessions stay cold |
+| **TUI-shaped stream** | Thinking, tools, markdown replies, cancel + send-while-busy (interrupt) |
+| **STT / TTS** | System recognizer + system TTS with **voice picker**; optional thinking beep |
 
 ---
 
@@ -196,8 +210,8 @@ Web UI fallback (no APK): `https://YOUR-PC.YOUR-TAILNET.ts.net/` in Chrome. Voic
 | `remote_token` | Long random string; phone WebSocket auth |
 | `agent_secret` | Same secret passed to `grok agent serve` |
 | `public_host` | Your Tailscale MagicDNS HTTPS origin, e.g. `https://my-pc.tailnet.ts.net` |
-| `projects[]` | Tabs to open: `name`, `cwd`, optional `session_id` to **resume** an existing Grok chat |
-| `history_limit` | How many recent turns to show in the app (agent still has full context) |
+| `projects[]` | Optional **labels** for known `session_id`s (not a whitelist, not auto-opened at boot) |
+| `history_limit` | How many recent turns to show after you open a session (agent still has full context) |
 
 ```json
 {
@@ -319,11 +333,12 @@ https://YOUR-PC.YOUR-TAILNET.ts.net/
 
 Native **Kotlin + Jetpack Compose** client in [`android/`](android/). Prebuilt APK is on [Releases](https://github.com/ericleigh007/grok-remote/releases/latest) — see **Sideload the Android app** above (Auto Blocker / unknown apps / Play Protect).
 
-- Session tabs, busy indicators  
+- Session picker (last-used, or pick from disk; **Show all**)  
 - **Thinking** (expand/collapse) and **tool** cards  
 - **Markwon** markdown rendering  
 - System **STT** + **TTS** with **voice picker**  
-- **Cancel turn** and **send-while-busy** (interrupt + inject new instruction)  
+- Optional **thinking beep** (off until you tap the bell)  
+- **Cancel turn** and **send-while-busy** (interrupt + inject)  
 - QR pair + encrypted token storage  
 
 Updates: new release → PC `install.ps1` (or drop `grok-remote.apk` into `releases/`) → phone `/dl` or `/pair` **Install APK**. Same sideload blockers apply the first time; later updates from the same source are usually one tap.
@@ -342,7 +357,7 @@ cd grok-remote
 pwsh -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`install.ps1` in a git checkout stays **in-place** (this folder), creates `.venv`, writes `config.json` if missing, and registers the same scheduled tasks.
+`install.ps1` in a git checkout stays **in-place** (this folder), creates `.venv`, writes `config.json` if missing, and installs the **GrokRemote** Windows service (UAC). Pass `-UseScheduledTasks` only if you refuse a service.
 
 ### Build the Android APK yourself
 
@@ -377,10 +392,10 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\package-release.ps1
 
 ## Day-to-day use
 
-1. Leave the PC powered; tasks keep **agent serve** + **bridge** up after logon.  
+1. Leave the PC powered. The **GrokRemote** service keeps `grok agent serve` + the bridge up (watchdog every minute).  
 2. Phone: Tailscale **Connected**.  
-3. Open the app (or HTTPS bookmark).  
-4. Switch sessions, chat, expand thinking, watch tools, cancel or inject midstream.  
+3. Open the app (or HTTPS bookmark). Re-enters the last session, or shows the picker.  
+4. Chat, expand thinking, watch tools, cancel or inject midstream. Unused sessions are not loaded.  
 5. After a new GitHub release: re-run `install.ps1` (or `publish-apk.ps1` from source) → PC `/pair` **Install** QR (or phone `/dl`) → install. Same Auto Blocker / Play Protect notes as first sideload.
 
 ---
@@ -426,11 +441,11 @@ grok-remote/
 
 | Symptom | Check |
 |---------|--------|
-| Pair page “refused” | Bridge not running → `schtasks /Run /TN GrokRemoteBridge` |
+| Pair page “refused” | Bridge not running → `Get-Service GrokRemote`; `Restart-Service GrokRemote` |
 | `/pair` over Tailscale is 403 | Expected — use `http://127.0.0.1:8787/pair` on the PC |
 | Phone can’t load HTTPS | Tailscale Serve + both devices Connected |
-| Chat connects but agent silent | `GET /api/health` → `agentAlive`; restart `GrokAgentServe` |
-| Empty history in app | `history_limit` in config; session UUID must match on-disk Grok session |
+| Chat connects but agent silent | `GET /api/health` → `agentAlive`; `Restart-Service GrokRemote` |
+| Empty history in app | Open a real session from the picker; `history_limit` only applies after resume |
 | Mic fails in browser | Use HTTPS Serve URL + Chrome; or use the native app STT |
 | Bad TTS voice | App top bar → voice chip → pick Neural/Natural/cloud voice |
 | Phone 502 / cannot reach host | Tailscale is up but the PC bridge was down. `Get-Service GrokRemote`; `Restart-Service GrokRemote`; `Get-Content logs\supervisor.log -Tail 40`. Watchdog should recover within a minute. |
