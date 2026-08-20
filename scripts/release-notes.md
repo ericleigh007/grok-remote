@@ -1,34 +1,38 @@
-Prebuilt **__VERSION__** — reliability upgrade: the PC stack is now a Windows service instead of brittle at-logon tasks.
+Prebuilt **__VERSION__** — same tree as `master`. PC zip + APK + `install.ps1`.
 
-## Increased reliability
+## Windows service (not logon tasks)
 
-Scheduled tasks only restarted when the *wrapper* exited with an error. If the wrapper died while Python/`grok` kept the port, a restart treated “port already open” as success and **stopped watching**. The next death stayed down until the next logon (502 from Tailscale, “cannot reach host” from the phone).
+Scheduled tasks only restarted when the *wrapper* failed. If the wrapper died while the child kept the port, a restart exited 0 and nothing watched the next crash (Tailscale **502**).
 
-**Default install is now a Windows service:**
+Default install is the **GrokRemote** Windows service:
 
-- **GrokRemote** runs as **LocalSystem** only as a supervisor (restart + health).
-- `grok agent serve` and the Python bridge are launched **as your Windows user** via S4U or your interactive session (`CreateProcessAsUser`). **No Windows password is stored.**
-- SCM restarts the supervisor on crash; a SYSTEM watchdog every minute force-starts it if :2419/:8787 is dead.
+- LocalSystem **supervisor only**
+- `grok agent serve` and the Python bridge run **as your user** (S4U / session token — **no password stored**)
+- SCM restart on crash + SYSTEM watchdog every minute if `:2419` / `:8787` is dead
 
 ```powershell
 irm https://github.com/ericleigh007/grok-remote/releases/latest/download/install.ps1 | iex
 ```
 
-Opt-in tasks (same supervisor, still no stored password): `install-startup.ps1 -UseScheduledTasks`.
+(`pwsh`, not Windows PowerShell 5.1.) Opt-in tasks: `install-startup.ps1 -UseScheduledTasks`.
 
-Then on the PC open `http://127.0.0.1:8787/pair`.
+## Sessions on demand
 
-## Android — sideload the APK
+The old stdio habit of auto-resuming every `config.json` project at boot is gone. The picker lists real chats under `~/.grok/sessions`. Last-used is re-entered; otherwise you pick. **Show all** lists every on-disk session. Idle threads stay cold.
 
-This is not on Play Store. The phone will try to stop you.
+## Phone
 
-1. Scan **Install APK** on the PC `/pair` page (or download `grok-remote.apk` from this release, or open `/dl` on the phone).
-2. **Samsung Auto Blocker** (on by default on many Galaxy phones): Settings → Security and privacy → **Auto Blocker** → Off.
-3. When Android says the source is not allowed: Settings → allow **Chrome** or **Files** to install unknown apps → open the APK again.
-4. **Play Protect** "Blocked": More details → **Install anyway**.
+- Optional **thinking beep** (off by default)
+- TTS no longer re-reads the previous reply while the model thinks
+- Top bar title is a full-width line (no one-letter wrapping)
 
-Full walkthrough is in the README.
+## Sideload the APK
 
-## Also in this zip
+Not on Play Store. Phone will try to stop you.
 
-`grok-remote-pc.zip` is the same tree the installer downloads: `server/`, `web/`, `supervise.ps1`, startup scripts, `config.example.json`.
+1. PC `http://127.0.0.1:8787/pair` → **Install APK**, or `/dl`, or `grok-remote.apk` on this release
+2. Samsung **Auto Blocker** off
+3. Allow unknown apps for Chrome/Files
+4. Play Protect → **Install anyway**
+
+Then pair from the same `/pair` page. Details in the README.

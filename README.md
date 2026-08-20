@@ -14,15 +14,13 @@ Nothing here patches Grok. The bridge talks to stock `grok agent serve`. Unatten
 
 ## What's new
 
-Newest first. This is the living project, not a marketing sheet. The last **tagged** GitHub Release zip is **v0.2.0** (Windows service). Session picker / on-demand load is on `master` and will ship in the next zip.
+Newest first. Tagged **[Releases](https://github.com/ericleigh007/grok-remote/releases/latest)** match this tree.
 
 | When | What actually changed |
 |------|------------------------|
-| **Now (v0.2+)** | **Windows service instead of logon scheduled tasks.** Task Scheduler only restarted when the *wrapper* exited with an error. If the wrapper died while Python/`grok` kept the port, a restart treated “port already open” as success and stopped watching — 502s for days on a PC that never sleeps. **GrokRemote** is now a delayed auto-start service: LocalSystem *supervisor only*; `grok agent serve` and the bridge run **as your user** via S4U (no password stored). SCM restarts the supervisor; a SYSTEM watchdog every minute force-starts it if `:2419` / `:8787` is dead. Opt-in: `install-startup.ps1 -UseScheduledTasks`. |
-| **Now** | **Sessions on demand.** Config `projects[]` is not a whitelist and is not auto-resumed at boot (that was leftover from the old stdio bridge). The picker lists real chats under `~/.grok/sessions`. Last-used session is re-entered; otherwise you pick. **Show all** lists every on-disk session — nothing is unreachable. Idle 1MB threads are *not* loaded in the background. |
-| **Now** | Phone UI: optional **thinking beep** (off by default), TTS no longer re-reads the previous reply while the model thinks, top bar no longer crushes the title into one-letter columns. |
-| **v0.2.0** | First GitHub **Release** zip: PC installer + prebuilt APK so you do not need Android Studio. |
-| **v0.1.x** | Public repo: Android client, `/pair` QR, `/dl` APK, Tailscale Serve path. |
+| **v0.3.0** | **Sessions on demand** (disk catalog, last-used / picker / **Show all** — not the old config whitelist). Optional **thinking beep**, TTS no longer re-reads the previous reply while thinking, top bar title is a full-width line. README claims checked against the code. |
+| **v0.2.0** | **Windows service instead of logon scheduled tasks.** Task Scheduler only restarted when the *wrapper* exited with an error. If the wrapper died while Python/`grok` kept the port, a restart treated “port already open” as success and stopped watching — 502s for days on a PC that never sleeps. **GrokRemote** is a delayed auto-start service: LocalSystem *supervisor only*; `grok agent serve` and the bridge run **as your user** via S4U (no password stored). SCM restarts the supervisor; a SYSTEM watchdog every minute force-starts it if `:2419` / `:8787` is dead. Opt-in: `install-startup.ps1 -UseScheduledTasks`. |
+| **v0.1.0** | First GitHub **Release** zip: PC installer + prebuilt APK so you do not need Android Studio. Android client, `/pair` QR, `/dl` APK, Tailscale Serve path. |
 
 ---
 
