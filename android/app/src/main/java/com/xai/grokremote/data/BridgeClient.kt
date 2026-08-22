@@ -114,17 +114,34 @@ class BridgeClient {
         send(o)
     }
 
-    fun listSessions(showAll: Boolean) {
-        send(
-            JSONObject()
-                .put("type", "list_sessions")
-                .put("showAll", showAll)
-                .put("all", showAll),
-        )
+    fun listSessions(showAll: Boolean = false, query: String? = null) {
+        val o = JSONObject()
+            .put("type", "list_sessions")
+            .put("showAll", showAll)
+            .put("all", showAll)
+        if (!query.isNullOrBlank()) {
+            o.put("query", query)
+        }
+        send(o)
     }
 
     fun ping() {
         send(JSONObject().put("type", "ping"))
+    }
+
+    fun catchUp(sessionId: String) {
+        send(JSONObject().put("type", "catch_up").put("sessionId", sessionId))
+    }
+
+    fun answerUserQuestion(requestId: String, answers: List<String>) {
+        val arr = org.json.JSONArray()
+        answers.forEach { arr.put(it) }
+        send(
+            JSONObject()
+                .put("type", "user_question_answer")
+                .put("requestId", requestId)
+                .put("answers", arr),
+        )
     }
 
     private fun send(obj: JSONObject) {
@@ -156,6 +173,7 @@ class BridgeClient {
                             available = o.optJSONArray("availableSessions").toAvailableList(),
                             availableTotal = o.optInt("availableTotal", 0),
                             catalogTruncated = o.optBoolean("catalogTruncated", false),
+                            query = o.optString("query", ""),
                         ),
                     )
                 }
@@ -217,6 +235,39 @@ class BridgeClient {
                             )
                         }
                     }
+                }
+                "user_question" -> {
+                    val qs = mutableListOf<AgentQuestion>()
+                    val arr = o.optJSONArray("questions")
+                    if (arr != null) {
+                        for (i in 0 until arr.length()) {
+                            val q = arr.optJSONObject(i) ?: continue
+                            val opts = mutableListOf<QuestionOption>()
+                            val oa = q.optJSONArray("options")
+                            if (oa != null) {
+                                for (j in 0 until oa.length()) {
+                                    val op = oa.optJSONObject(j) ?: continue
+                                    opts += QuestionOption(
+                                        id = op.optString("id", op.optString("label")),
+                                        label = op.optString("label", op.optString("id")),
+                                    )
+                                }
+                            }
+                            qs += AgentQuestion(
+                                id = q.optString("id", i.toString()),
+                                prompt = q.optString("prompt", q.optString("question")),
+                                options = opts,
+                                allowMultiple = q.optBoolean("allowMultiple", false),
+                            )
+                        }
+                    }
+                    _events.tryEmit(
+                        BridgeEvent.UserQuestion(
+                            requestId = o.optString("requestId"),
+                            sessionId = o.optString("sessionId").ifBlank { null },
+                            questions = qs,
+                        ),
+                    )
                 }
                 "turn_complete" -> {
                     _events.tryEmit(
@@ -343,6 +394,7 @@ sealed class BridgeEvent {
         val available: List<AvailableSession>,
         val availableTotal: Int,
         val catalogTruncated: Boolean,
+        val query: String = "",
     ) : BridgeEvent()
 
     data class SessionUpsert(
@@ -369,6 +421,11 @@ sealed class BridgeEvent {
         val status: String?,
     ) : BridgeEvent()
     data class TurnComplete(val sessionId: String, val stopReason: String?) : BridgeEvent()
+    data class UserQuestion(
+        val requestId: String,
+        val sessionId: String?,
+        val questions: List<AgentQuestion>,
+    ) : BridgeEvent()
     data class AgentStatus(
         val alive: Boolean,
         val transport: String?,

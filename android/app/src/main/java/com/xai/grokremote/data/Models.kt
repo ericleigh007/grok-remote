@@ -50,6 +50,24 @@ data class ProjectOption(
     val sessionId: String? = null,
 )
 
+data class QuestionOption(
+    val id: String,
+    val label: String,
+)
+
+data class AgentQuestion(
+    val id: String,
+    val prompt: String,
+    val options: List<QuestionOption> = emptyList(),
+    val allowMultiple: Boolean = false,
+)
+
+data class PendingUserQuestion(
+    val requestId: String,
+    val sessionId: String?,
+    val questions: List<AgentQuestion>,
+)
+
 data class AvailableSession(
     val title: String,
     val cwd: String,
@@ -89,6 +107,11 @@ data class UiState(
     val catalogTruncated: Boolean = false,
     val showSessionPicker: Boolean = false,
     val openingSession: Boolean = false,
+    val pendingQuestion: PendingUserQuestion? = null,
+    val catchingUp: Boolean = false,
+    val sessionQuery: String = "",
+    val catalogQuery: String = "",
+    val searchingSessions: Boolean = false,
 ) {
     val active: SessionState?
         get() = activeSessionId?.let { sessions[it] }

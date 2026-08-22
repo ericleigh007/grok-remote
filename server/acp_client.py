@@ -78,6 +78,7 @@ class AcpClient:
         self.agent_info: dict[str, Any] = {}
         self.reconnect_count = 0
         self.last_error: Optional[str] = None
+        self._user_questions: dict[str, tuple[Any, asyncio.Future]] = {}
 
     # --- public status -------------------------------------------------
 
@@ -454,6 +455,53 @@ class AcpClient:
         )
         return info
 
+    async def catch_up(self, session_id: str) -> SessionInfo:
+        """Reload UI transcript from disk; optionally re-attach ACP after the snapshot is sent."""
+        await self.ensure_ready()
+        info = self.sessions.get(session_id)
+        if info is None:
+            raise KeyError(f"unknown session: {session_id}")
+        recent = load_recent_messages(
+            session_id,
+            limit=self.history_limit,
+            include_thoughts=self.history_include_thoughts,
+        )
+        info.messages = list(recent)
+        info.messages.append(
+            {
+                "role": "system",
+                "text": (
+                    f"Caught up from PC disk — last {len(recent)} messages. "
+                    "Not a live view of the desktop TUI."
+                ),
+            }
+        )
+        await self._emit(
+            {
+                "type": "session_loaded",
+                "sessionId": session_id,
+                "cwd": info.cwd,
+                "title": info.title,
+                "messages": info.messages,
+            }
+        )
+        # Best-effort re-attach so the next phone prompt isn't on a stale ACP session.
+        # Do this after the snapshot so the running-man button isn't stuck on resume.
+        try:
+            await self.request(
+                "session/resume",
+                {
+                    "sessionId": session_id,
+                    "cwd": info.cwd,
+                    "mcpServers": [],
+                    "_meta": {"yoloMode": True} if self.always_approve else {},
+                },
+                timeout=120,
+            )
+        except Exception as exc:
+            log.warning("catch_up ACP resume failed (%s) — UI already refreshed from disk", exc)
+        return info
+
     async def prompt(self, session_id: str, text: str) -> dict[str, Any]:
         await self.ensure_ready()
         if session_id not in self.sessions:
@@ -633,10 +681,7 @@ class AcpClient:
         req_id = msg["id"]
         try:
             if method in ("_x.ai/ask_user_question", "ask_user_question"):
-                # Unattended remote: no picker. Empty answers lets the turn continue
-                # instead of hanging until the 1h prompt timeout.
-                log.info("ask_user_question skipped (unattended remote)")
-                await self._respond(req_id, {"answers": []})
+                asyncio.create_task(self._relay_user_question(req_id, params))
                 return
 
             if method == "session/request_permission":
@@ -685,6 +730,94 @@ class AcpClient:
         except Exception as exc:
             log.exception("agent request failed: %s", method)
             await self._respond_error(req_id, -32000, str(exc))
+
+    def _normalize_questions(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = params.get("questions")
+        if not raw:
+            if params.get("question") or params.get("prompt"):
+                raw = [params]
+            else:
+                raw = []
+        out: list[dict[str, Any]] = []
+        for i, q in enumerate(raw):
+            if isinstance(q, str):
+                out.append(
+                    {
+                        "id": str(i),
+                        "prompt": q,
+                        "options": [],
+                        "allowMultiple": False,
+                    }
+                )
+                continue
+            if not isinstance(q, dict):
+                continue
+            prompt = (
+                q.get("prompt")
+                or q.get("question")
+                or q.get("header")
+                or q.get("text")
+                or ""
+            )
+            options: list[dict[str, str]] = []
+            for o in q.get("options") or []:
+                if isinstance(o, str):
+                    options.append({"id": o, "label": o})
+                elif isinstance(o, dict):
+                    label = str(o.get("label") or o.get("text") or o.get("id") or "")
+                    oid = str(o.get("id") or label)
+                    if label:
+                        options.append({"id": oid, "label": label})
+            out.append(
+                {
+                    "id": str(q.get("id") or i),
+                    "prompt": str(prompt),
+                    "options": options,
+                    "allowMultiple": bool(q.get("multiSelect") or q.get("allowMultiple")),
+                }
+            )
+        return out
+
+    async def _relay_user_question(self, req_id: Any, params: dict[str, Any]) -> None:
+        questions = self._normalize_questions(params)
+        request_key = f"q-{req_id}"
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._user_questions[request_key] = (req_id, fut)
+        session_id = params.get("sessionId")
+        # Prefer an in-flight busy session if the agent omitted sessionId
+        if not session_id:
+            for sid, info in self.sessions.items():
+                if info.busy:
+                    session_id = sid
+                    break
+        await self._emit(
+            {
+                "type": "user_question",
+                "sessionId": session_id,
+                "requestId": request_key,
+                "questions": questions,
+            }
+        )
+        try:
+            answers = await asyncio.wait_for(fut, timeout=900)
+        except asyncio.TimeoutError:
+            log.warning("user question %s timed out — continuing without answers", request_key)
+            answers = []
+        except asyncio.CancelledError:
+            answers = []
+        finally:
+            self._user_questions.pop(request_key, None)
+        await self._respond(req_id, {"answers": answers})
+
+    def answer_user_question(self, request_id: str, answers: Any) -> bool:
+        pending = self._user_questions.get(request_id)
+        if not pending:
+            return False
+        _req_id, fut = pending
+        if not fut.done():
+            fut.set_result(answers if answers is not None else [])
+        return True
 
     async def _respond(self, req_id: Any, result: Any) -> None:
         await self._write({"jsonrpc": "2.0", "id": req_id, "result": result})

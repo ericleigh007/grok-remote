@@ -23,4 +23,14 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        (application as? GrokRemoteApp)?.onActivityResumed()
+    }
+
+    override fun onPause() {
+        (application as? GrokRemoteApp)?.onActivityPaused()
+        super.onPause()
+    }
 }

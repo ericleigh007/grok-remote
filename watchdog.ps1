@@ -27,14 +27,17 @@ function Test-Listen([int]$Port) {
 }
 
 function Test-Healthy {
-  if (-not (Test-Listen 2419)) { return $false }
-  if (-not (Test-Listen 8787)) { return $false }
-  try {
-    $h = Invoke-RestMethod http://127.0.0.1:8787/api/health -TimeoutSec 2
-    return [bool]($h.ok -and $h.agentAlive)
-  } catch {
+  # Ports only. Do NOT Restart-Service because agentAlive is false — that
+  # kills a live Tailscale WebSocket (phone sees HTTP 101 then 502).
+  # The supervisor restarts grok/python children; the watchdog only recovers
+  # a dead listen socket or a stopped service.
+  $p2419 = Test-Listen 2419
+  $p8787 = Test-Listen 8787
+  if (-not $p2419 -or -not $p8787) {
+    Write-Log "ports down 2419=$p2419 8787=$p8787"
     return $false
   }
+  return $true
 }
 
 function Start-Stack {

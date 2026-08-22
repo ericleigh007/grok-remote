@@ -4,6 +4,7 @@ import android.Manifest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
@@ -44,7 +45,13 @@ fun GrokRemoteRoot(
     }
 
     val perms = rememberMultiplePermissionsState(
-        listOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA),
+        buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            add(Manifest.permission.CAMERA)
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        },
     )
     LaunchedEffect(Unit) {
         if (!perms.allPermissionsGranted) {
@@ -67,7 +74,12 @@ fun GrokRemoteRoot(
         },
         containerColor = Bg,
     ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
+        Box(
+            Modifier
+                .padding(padding)
+                .imePadding()
+                .fillMaxSize(),
+        ) {
             if (state.needsPairing) {
                 PairScreen(
                     onPaired = { base, token -> vm.savePairing(base, token) },

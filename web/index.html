@@ -33,6 +33,14 @@
       </div>
       <div class="top-actions">
         <select id="tts-voice" class="voice-select" title="TTS voice" aria-label="TTS voice"></select>
+        <button id="catch-up" class="exit-btn" title="Catch up from the PC session" aria-label="Catch up from PC">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path fill="#fff" d="M18 3h3v18h-3v-2h1V5h-1z"/>
+            <path fill="#fff" d="M13.2 11.2h3.4v1.6h-3.4zM16.2 9.2L20.2 12 16.2 14.8z"/>
+            <circle fill="#fff" cx="8.6" cy="6.9" r="1.7"/>
+            <path fill="#fff" d="M7.4 9.2h3l2.4 3-1.4 1-1.8-2v5H7.4zM7.2 9.6L4.4 12.2 5.6 13.4 8.2 11.2zM9.4 15.8l3.4 4.6-1.6.8-2.8-4-2.2 4-1.6-1 3-4.4z"/>
+          </svg>
+        </button>
         <button id="tts-toggle" class="ghost" title="Read replies aloud">TTS on</button>
         <button id="think-beep-toggle" class="ghost" title="Short beep while Grok is thinking">Beep off</button>
         <button id="new-session" class="ghost" title="New session">+ Session</button>
@@ -43,7 +51,9 @@
 
     <div id="session-picker" class="session-picker hidden">
       <h2>Re-enter a session</h2>
-      <p class="muted small">Only the session you open is loaded. Unused threads stay on disk.</p>
+      <p class="muted small">Search titles, folders, and transcripts. Only the session you open is loaded.</p>
+      <input id="session-search" type="search" placeholder="Search sessions…" autocomplete="off" enterkeyhint="search" />
+      <p id="session-search-status" class="muted small hidden"></p>
       <div id="session-picker-list"></div>
       <button id="show-all-sessions" class="ghost">Show all sessions</button>
       <button id="picker-new-session" class="ghost">New session</button>
@@ -52,6 +62,7 @@
     <main id="chat" class="chat" aria-live="polite"></main>
 
     <div id="tool-line" class="tool-line hidden"></div>
+    <div id="user-question" class="user-question hidden"></div>
 
     <footer class="composer">
       <div class="composer-row">
@@ -70,6 +81,6 @@
   <!-- cache-bust when UI changes; marked optional, app.js has a built-in fallback -->
   <script src="/static/vendor/marked.min.js?v=2"></script>
   <script src="/static/vendor/purify.min.js?v=2"></script>
-  <script src="/static/app.js?v=5"></script>
+  <script src="/static/app.js?v=8"></script>
 </body>
 </html>

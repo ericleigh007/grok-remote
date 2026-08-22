@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -25,6 +26,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -40,14 +43,17 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -61,14 +67,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.painterResource
+import com.xai.grokremote.R
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xai.grokremote.data.AvailableSession
 import com.xai.grokremote.data.ConnState
+import com.xai.grokremote.data.PendingUserQuestion
 import com.xai.grokremote.data.TimelineItem
 import com.xai.grokremote.data.UiState
 import com.xai.grokremote.data.VoiceOption
@@ -136,6 +147,7 @@ fun ChatScreen(state: UiState, vm: GrokViewModel) {
                     TimelineRow(item, onToggleThought = { vm.toggleThought(item.id) })
                 }
             }
+            state.pendingQuestion?.let { QuestionPromptCard(it, vm) }
             Composer(state, vm)
         }
     }
@@ -153,58 +165,142 @@ fun ChatScreen(state: UiState, vm: GrokViewModel) {
 
 @Composable
 private fun SessionPicker(state: UiState, vm: GrokViewModel, modifier: Modifier = Modifier) {
-    LazyColumn(
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+    val q = state.sessionQuery.trim()
+    val rows = if (q.isEmpty() || q.equals(state.catalogQuery, ignoreCase = true)) {
+        state.availableSessions
+    } else {
+        state.availableSessions.filter { it.matchesQuery(q) }
+    }
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        item {
-            Text("Re-enter a session", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            Text(
-                "Only the session you open is loaded. Nothing else is resumed in the background.",
-                color = Muted,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+        Text("Re-enter a session", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        Text(
+            "Search titles, folders, and transcripts. Only the session you open is loaded.",
+            color = Muted,
+            fontSize = 13.sp,
+        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(46.dp)
+                .background(Panel2, RoundedCornerShape(12.dp))
+                .border(1.dp, Panel2, RoundedCornerShape(12.dp))
+                .padding(start = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.Search,
+                contentDescription = null,
+                tint = Muted,
+                modifier = Modifier.size(18.dp),
             )
+            BasicTextField(
+                value = state.sessionQuery,
+                onValueChange = { vm.setSessionQuery(it) },
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 10.dp, vertical = 12.dp),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary),
+                cursorBrush = SolidColor(Accent),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(
+                    onSearch = { vm.setSessionQuery(state.sessionQuery, immediate = true) },
+                ),
+                decorationBox = { inner ->
+                    if (state.sessionQuery.isEmpty()) {
+                        Text("Search sessions…", color = Muted, fontSize = 14.sp)
+                    }
+                    inner()
+                },
+            )
+            if (state.searchingSessions) {
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .padding(end = 8.dp)
+                        .size(16.dp),
+                    color = Accent,
+                    strokeWidth = 2.dp,
+                )
+            } else if (state.sessionQuery.isNotEmpty()) {
+                IconButton(onClick = { vm.setSessionQuery("") }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Clear search", tint = Muted)
+                }
+            }
         }
-        items(state.availableSessions, key = { it.sessionId ?: "${it.cwd}-${it.title}" }) { item ->
-            SessionPickRow(item, onClick = { vm.enterAvailable(item) })
+        val status = when {
+            q.isNotEmpty() && state.searchingSessions -> "Searching…"
+            q.isNotEmpty() && rows.isEmpty() -> "No sessions match “$q”"
+            q.isNotEmpty() -> {
+                val n = if (state.catalogQuery.equals(q, ignoreCase = true)) {
+                    state.availableTotal
+                } else {
+                    rows.size
+                }
+                if (n == 1) "1 match" else "$n matches"
+            }
+            else -> null
         }
-        item {
-            val hidden = (state.availableTotal - state.availableSessions.size).coerceAtLeast(0)
-            if (state.catalogTruncated || hidden > 0) {
+        if (status != null) {
+            Text(status, color = Muted, fontSize = 12.sp)
+        }
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(rows, key = { it.sessionId ?: "${it.cwd}-${it.title}" }) { item ->
+                SessionPickRow(item, onClick = { vm.enterAvailable(item) })
+            }
+            item {
+                val hidden = (state.availableTotal - state.availableSessions.size).coerceAtLeast(0)
+                if (q.isEmpty() && (state.catalogTruncated || hidden > 0)) {
+                    Surface(
+                        onClick = { vm.showAllSessions() },
+                        color = Panel2,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, Accent.copy(alpha = 0.4f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (hidden > 0) "Show all sessions ($hidden more)" else "Show all sessions",
+                            color = Accent,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(14.dp),
+                        )
+                    }
+                }
+            }
+            item {
                 Surface(
-                    onClick = { vm.showAllSessions() },
-                    color = Panel2,
+                    onClick = { vm.newSession() },
+                    color = Panel,
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, Accent.copy(alpha = 0.4f)),
+                    border = BorderStroke(1.dp, Panel2),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        if (hidden > 0) "Show all sessions ($hidden more)" else "Show all sessions",
-                        color = Accent,
-                        fontWeight = FontWeight.SemiBold,
+                        "New session",
+                        color = TextPrimary,
                         modifier = Modifier.padding(14.dp),
                     )
                 }
             }
         }
-        item {
-            Surface(
-                onClick = { vm.newSession() },
-                color = Panel,
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, Panel2),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    "New session",
-                    color = TextPrimary,
-                    modifier = Modifier.padding(14.dp),
-                )
-            }
-        }
     }
+}
+
+private fun AvailableSession.matchesQuery(q: String): Boolean {
+    if (q.isBlank()) return true
+    return title.contains(q, ignoreCase = true) ||
+        cwd.contains(q, ignoreCase = true) ||
+        (preview?.contains(q, ignoreCase = true) == true) ||
+        (sessionId?.contains(q, ignoreCase = true) == true)
 }
 
 @Composable
@@ -285,6 +381,33 @@ private fun TopBar(state: UiState, vm: GrokViewModel) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.End,
         ) {
+            Surface(
+                onClick = { if (!state.catchingUp) vm.catchUp() },
+                enabled = state.activeSessionId != null && state.conn == ConnState.Online,
+                color = Color(0xFF009640),
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Box(
+                    Modifier.size(40.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (state.catchingUp) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_emergency_exit),
+                            contentDescription = "Catch up from PC",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(6.dp))
             Surface(
                 onClick = { vm.openVoicePicker() },
                 color = Panel2,
@@ -372,6 +495,9 @@ private fun StatusStrip(state: UiState) {
             MiniPill("agent down", Danger)
         } else if (state.agentAlive == true) {
             MiniPill(state.agentTransport ?: "agent", Ok)
+        }
+        if (state.catchingUp) {
+            MiniPill("catching up", Color(0xFF009640))
         }
         if (state.active?.busy == true) {
             MiniPill("working", Warn)
@@ -511,6 +637,76 @@ private fun TimelineRow(item: TimelineItem, onToggleThought: () -> Unit) {
                     .fillMaxWidth()
                     .padding(vertical = 2.dp),
             )
+        }
+    }
+}
+
+@Composable
+private fun QuestionPromptCard(q: PendingUserQuestion, vm: GrokViewModel) {
+    val picks = androidx.compose.runtime.remember(q.requestId) {
+        androidx.compose.runtime.mutableStateMapOf<String, String>()
+    }
+    Surface(
+        color = Warn.copy(alpha = 0.12f),
+        border = BorderStroke(1.dp, Warn.copy(alpha = 0.45f)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Grok needs your answer", color = Warn, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            q.questions.forEach { question ->
+                Text(question.prompt, color = TextPrimary, fontSize = 14.sp)
+                if (question.options.isEmpty()) {
+                    BasicTextField(
+                        value = picks[question.id] ?: "",
+                        onValueChange = { picks[question.id] = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Panel2, RoundedCornerShape(10.dp))
+                            .padding(10.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary),
+                        cursorBrush = SolidColor(Accent),
+                        decorationBox = { inner ->
+                            if (picks[question.id].isNullOrEmpty()) {
+                                Text("Type an answer…", color = Muted, fontSize = 13.sp)
+                            }
+                            inner()
+                        },
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        question.options.forEach { opt ->
+                            FilterChip(
+                                selected = picks[question.id] == opt.label,
+                                onClick = { picks[question.id] = opt.label },
+                                label = { Text(opt.label, maxLines = 2) },
+                            )
+                        }
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { vm.skipPendingQuestion() }) {
+                    Text("Skip", color = Muted)
+                }
+                Surface(
+                    onClick = {
+                        val answers = q.questions.mapNotNull { picks[it.id]?.takeIf { a -> a.isNotBlank() } }
+                        vm.answerPendingQuestion(answers)
+                    },
+                    color = Accent,
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Text(
+                        "Send answer",
+                        color = TextPrimary,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
         }
     }
 }

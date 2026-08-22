@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import unquote
@@ -32,12 +33,45 @@ def _decode_cwd_folder(name: str) -> str:
     return unquote(name).replace("/", "\\") if os.name == "nt" else unquote(name)
 
 
-def list_on_disk_sessions(*, min_bytes: int = 200, limit: Optional[int] = None) -> list[dict[str, Any]]:
-    """Real Grok sessions on disk (not the config.json project list). Newest first."""
+def _file_contains_ci(path: Path, needle: str) -> bool:
+    """Case-insensitive substring search that does not load the whole file."""
+    if not needle:
+        return True
+    overlap = max(0, len(needle) - 1)
+    prev = ""
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as f:
+            while True:
+                chunk = f.read(256 * 1024)
+                if not chunk:
+                    return False
+                hay = (prev + chunk).casefold()
+                if needle in hay:
+                    return True
+                prev = hay[-overlap:] if overlap else ""
+    except OSError:
+        return False
+
+
+def list_on_disk_sessions(
+    *,
+    min_bytes: int = 200,
+    limit: Optional[int] = None,
+    query: Optional[str] = None,
+    aliases: Optional[dict[str, str]] = None,
+) -> list[dict[str, Any]]:
+    """Real Grok sessions on disk (not the config.json project list). Newest first.
+
+    ``query`` matches title, cwd, session id, summary, and (if 3+ chars) transcript.
+    ``aliases`` are config.json display names keyed by session id.
+    """
     root = grok_home() / "sessions"
     if not root.is_dir():
         return []
+    q = (query or "").strip().casefold()
+    scan_transcript = len(q) >= 3
     found: list[dict[str, Any]] = []
+    transcript_jobs: list[tuple[Path, dict[str, Any]]] = []
     for cwd_dir in root.iterdir():
         if not cwd_dir.is_dir():
             continue
@@ -61,7 +95,8 @@ def list_on_disk_sessions(*, min_bytes: int = 200, limit: Optional[int] = None) 
             info = summary.get("info") if isinstance(summary.get("info"), dict) else {}
             cwd = str(info.get("cwd") or cwd_fallback)
             title = (
-                summary.get("generated_title")
+                (aliases or {}).get(sess.name)
+                or summary.get("generated_title")
                 or summary.get("session_summary")
                 or Path(cwd).name
                 or sess.name[:8]
@@ -69,20 +104,57 @@ def list_on_disk_sessions(*, min_bytes: int = 200, limit: Optional[int] = None) 
             updated = summary.get("updated_at") or summary.get("last_active_at") or ""
             mtime = hist.stat().st_mtime
             nmsg = int(summary.get("num_chat_messages") or 0)
-            found.append(
-                {
-                    "sessionId": sess.name,
-                    "title": str(title),
-                    "cwd": cwd,
-                    "updatedAt": str(updated),
-                    "mtime": mtime,
-                    "messageCount": nmsg,
-                    "preview": str(summary.get("last_turn_summary") or "")[:140],
-                }
+            preview_full = str(
+                summary.get("last_turn_summary") or summary.get("session_summary") or ""
             )
-    found.sort(key=lambda r: (r.get("updatedAt") or "", r.get("mtime") or 0), reverse=True)
+            row: dict[str, Any] = {
+                "sessionId": sess.name,
+                "title": str(title),
+                "cwd": cwd,
+                "updatedAt": str(updated),
+                "mtime": mtime,
+                "messageCount": nmsg,
+                "preview": preview_full[:140],
+            }
+            if q:
+                hay = " ".join(
+                    [
+                        str(title),
+                        cwd,
+                        sess.name,
+                        str(summary.get("generated_title") or ""),
+                        str(summary.get("session_summary") or ""),
+                        preview_full,
+                        Path(cwd).name,
+                    ]
+                ).casefold()
+                if q in hay:
+                    row["_rank"] = 0
+                    found.append(row)
+                elif scan_transcript:
+                    transcript_jobs.append((hist, row))
+                continue
+            found.append(row)
+    if transcript_jobs:
+        def _hit(job: tuple[Path, dict[str, Any]]) -> Optional[dict[str, Any]]:
+            hist, row = job
+            if _file_contains_ci(hist, q):
+                row["_rank"] = 1
+                return row
+            return None
+
+        workers = min(8, max(2, len(transcript_jobs)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for row in pool.map(_hit, transcript_jobs):
+                if row:
+                    found.append(row)
+    if q:
+        found.sort(key=lambda r: (int(r.get("_rank") or 0), -(r.get("mtime") or 0)))
+    else:
+        found.sort(key=lambda r: (r.get("updatedAt") or "", r.get("mtime") or 0), reverse=True)
     for row in found:
         row.pop("mtime", None)
+        row.pop("_rank", None)
     if limit is None:
         return found
     return found[: max(1, int(limit))]

@@ -26,6 +26,7 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = Prefs(app)
     private val bridge = BridgeClient()
     private val speech = SpeechServices(app)
+    private val notifier = com.xai.grokremote.data.PromptNotifier(app)
 
     private val _state = MutableStateFlow(
         UiState(
@@ -39,6 +40,7 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
 
     private var reconnectJob: Job? = null
     private var thinkingCueJob: Job? = null
+    private var catalogJob: Job? = null
     /** Assistant bubble already spoken for a session — avoid re-reading it while the next turn thinks. */
     private val spokenAssistantIds = mutableMapOf<String, String>()
 
@@ -84,6 +86,7 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                             ConnState.Error -> "error"
                             ConnState.Disconnected -> "offline"
                         },
+                        catchingUp = if (c == ConnState.Online) it.catchingUp else false,
                     )
                 }
                 if (c == ConnState.Disconnected || c == ConnState.Error) {
@@ -191,7 +194,35 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun setSessionQuery(q: String, immediate: Boolean = false) {
+        _state.update {
+            it.copy(
+                sessionQuery = q,
+                searchingSessions = q.trim().isNotEmpty(),
+            )
+        }
+        catalogJob?.cancel()
+        catalogJob = viewModelScope.launch {
+            val trimmed = q.trim()
+            if (trimmed.isEmpty()) {
+                bridge.listSessions(showAll = false)
+                return@launch
+            }
+            if (!immediate) delay(300)
+            if (!isActive) return@launch
+            bridge.listSessions(query = trimmed)
+        }
+    }
+
     fun showAllSessions() {
+        catalogJob?.cancel()
+        _state.update {
+            it.copy(
+                sessionQuery = "",
+                catalogQuery = "",
+                searchingSessions = false,
+            )
+        }
         bridge.listSessions(showAll = true)
     }
 
@@ -245,6 +276,13 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
         speech.stopSpeaking()
         bridge.cancel(sid)
         markNotBusy(sid)
+    }
+
+    fun catchUp() {
+        val sid = _state.value.activeSessionId ?: return
+        if (_state.value.catchingUp) return
+        _state.update { it.copy(catchingUp = true) }
+        bridge.catchUp(sid)
     }
 
     fun newSession() {
@@ -347,6 +385,20 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(errorBanner = null) }
     }
 
+    fun answerPendingQuestion(answers: List<String>) {
+        val q = _state.value.pendingQuestion ?: return
+        bridge.answerUserQuestion(q.requestId, answers)
+        notifier.clear()
+        _state.update { it.copy(pendingQuestion = null) }
+    }
+
+    fun skipPendingQuestion() {
+        val q = _state.value.pendingQuestion ?: return
+        bridge.answerUserQuestion(q.requestId, emptyList())
+        notifier.clear()
+        _state.update { it.copy(pendingQuestion = null) }
+    }
+
     private fun scheduleReconnect() {
         reconnectJob?.cancel()
         if (!prefs.hasPairing()) return
@@ -393,11 +445,15 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             is BridgeEvent.SessionCatalog -> {
+                val current = _state.value.sessionQuery.trim()
+                if (ev.query != current) return
                 _state.update {
                     it.copy(
                         availableSessions = ev.available,
                         availableTotal = ev.availableTotal,
                         catalogTruncated = ev.catalogTruncated,
+                        catalogQuery = ev.query,
+                        searchingSessions = false,
                         showSessionPicker = true,
                     )
                 }
@@ -418,6 +474,7 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                         activeSessionId = ev.sessionId,
                         showSessionPicker = false,
                         openingSession = false,
+                        catchingUp = false,
                     )
                 }
             }
@@ -482,6 +539,20 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                 markBusy(ev.sessionId, false)
                 maybeSpeakThisTurn(ev.sessionId)
             }
+            is BridgeEvent.UserQuestion -> {
+                stopThinkingCue()
+                val pending = com.xai.grokremote.data.PendingUserQuestion(
+                    requestId = ev.requestId,
+                    sessionId = ev.sessionId,
+                    questions = ev.questions,
+                )
+                _state.update { it.copy(pendingQuestion = pending) }
+                val first = ev.questions.firstOrNull()?.prompt ?: "Grok needs an answer"
+                val app = getApplication<Application>() as? com.xai.grokremote.GrokRemoteApp
+                if (app == null || !app.inForeground) {
+                    notifier.notifyQuestion("Grok needs your answer", first)
+                }
+            }
             is BridgeEvent.AgentStatus -> {
                 _state.update {
                     it.copy(
@@ -496,6 +567,8 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                     it.copy(
                         errorBanner = ev.message,
                         openingSession = false,
+                        catchingUp = false,
+                        searchingSessions = false,
                         showSessionPicker = it.sessions.isEmpty() || it.showSessionPicker,
                     )
                 }

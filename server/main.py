@@ -160,18 +160,45 @@ def _session_aliases() -> dict[str, str]:
     return aliases
 
 
-def session_catalog(*, include_empty: bool = False, limit: Optional[int] = None) -> list[dict[str, Any]]:
+def session_catalog(
+    *,
+    include_empty: bool = False,
+    limit: Optional[int] = None,
+    query: Optional[str] = None,
+) -> list[dict[str, Any]]:
     """On-disk Grok sessions. Config names are labels only — not a whitelist."""
-    items = list_on_disk_sessions(
+    return list_on_disk_sessions(
         min_bytes=0 if include_empty else 200,
         limit=limit,
+        query=query,
+        aliases=_session_aliases(),
     )
-    aliases = _session_aliases()
-    for item in items:
-        sid = item.get("sessionId")
-        if sid in aliases:
-            item["title"] = aliases[sid]
-    return items
+
+
+def session_catalog_payload(*, include_empty: bool = False, query: str = "") -> dict[str, Any]:
+    """Picker payload: recent / all / search. Safe to run in a worker thread."""
+    q = (query or "").strip()
+    if q:
+        items = session_catalog(include_empty=True, limit=None, query=q)
+        total = len(items)
+        cap = 80
+        return {
+            "availableSessions": items[:cap],
+            "availableTotal": total,
+            "catalogTruncated": total > cap,
+            "query": q,
+        }
+    if include_empty:
+        items = session_catalog(include_empty=True, limit=None)
+        return {
+            "availableSessions": items,
+            "availableTotal": len(items),
+            "catalogTruncated": False,
+            "query": "",
+        }
+    meta = session_catalog_meta()
+    meta["query"] = ""
+    return meta
 
 
 def session_catalog_meta() -> dict[str, Any]:
@@ -338,7 +365,15 @@ async def ws_endpoint(websocket: WebSocket):
         clients.add(websocket)
 
     last = _read_last_session()
-    catalog = session_catalog_meta()
+    try:
+        catalog = await asyncio.to_thread(session_catalog_meta)
+    except Exception:
+        log.exception("session catalog failed on hello")
+        catalog = {
+            "availableSessions": [],
+            "availableTotal": 0,
+            "catalogTruncated": False,
+        }
     await websocket.send_text(
         json.dumps(
             {
@@ -386,16 +421,27 @@ async def ws_endpoint(websocket: WebSocket):
                     asyncio.create_task(_run_prompt(session_id, text))
                 elif mtype == "cancel":
                     await agent.cancel(msg["sessionId"])
+                elif mtype == "catch_up":
+                    sid = msg.get("sessionId")
+                    if not sid:
+                        continue
+                    asyncio.create_task(_run_catch_up(sid))
                 elif mtype == "list_sessions":
                     include_empty = bool(msg.get("all") or msg.get("showAll"))
-                    items = session_catalog(include_empty=include_empty, limit=None)
+                    query = str(msg.get("query") or msg.get("q") or "").strip()
+                    payload = await asyncio.to_thread(
+                        session_catalog_payload,
+                        include_empty=include_empty,
+                        query=query,
+                    )
                     await websocket.send_text(
                         json.dumps(
                             {
                                 "type": "session_catalog",
-                                "availableSessions": items,
-                                "availableTotal": len(items),
-                                "catalogTruncated": False,
+                                "availableSessions": payload["availableSessions"],
+                                "availableTotal": payload["availableTotal"],
+                                "catalogTruncated": payload["catalogTruncated"],
+                                "query": payload.get("query") or "",
                                 "complete": True,
                             },
                             ensure_ascii=False,
@@ -417,6 +463,14 @@ async def ws_endpoint(websocket: WebSocket):
                             "title": info.title,
                             "messages": info.messages,
                         }
+                    )
+                elif mtype == "user_question_answer":
+                    ok = agent.answer_user_question(
+                        str(msg.get("requestId") or ""),
+                        msg.get("answers") if "answers" in msg else msg.get("answer"),
+                    )
+                    await websocket.send_text(
+                        json.dumps({"type": "user_question_ack", "ok": ok, "requestId": msg.get("requestId")})
                     )
                 elif mtype == "ping":
                     await websocket.send_text(json.dumps({"type": "pong"}))
@@ -441,6 +495,20 @@ async def _run_prompt(session_id: str, text: str) -> None:
         await agent.prompt(session_id, text)
     except Exception as exc:
         log.exception("prompt task failed")
+        await broadcast(
+            {
+                "type": "error",
+                "sessionId": session_id,
+                "message": str(exc),
+            }
+        )
+
+
+async def _run_catch_up(session_id: str) -> None:
+    try:
+        await agent.catch_up(session_id)
+    except Exception as exc:
+        log.exception("catch_up failed")
         await broadcast(
             {
                 "type": "error",
@@ -999,7 +1067,7 @@ def main() -> None:
                     f.write(
                         f"{__import__('datetime').datetime.now().isoformat()} "
                         f"pid={os.getpid()} heartbeat sessions={len(agent.sessions)} "
-                        f"agent_alive={agent._proc is not None and agent._proc.returncode is None}\n"
+                        f"agent_alive={agent.agent_alive}\n"
                     )
             except Exception:
                 break

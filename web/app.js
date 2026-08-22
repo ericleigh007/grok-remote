@@ -17,6 +17,7 @@
   const micBtn = $("mic-btn");
   const cancelBtn = $("cancel-btn");
   const newSessionBtn = $("new-session");
+  const catchUpBtn = $("catch-up");
   const ttsToggle = $("tts-toggle");
   const ttsVoiceSelect = $("tts-voice");
   const thinkBeepToggle = $("think-beep-toggle");
@@ -25,8 +26,11 @@
   const projectSelect = $("project-select");
   const cwdLabel = $("cwd-label");
   const toolLine = $("tool-line");
+  const userQuestionEl = $("user-question");
   const sessionPicker = $("session-picker");
   const sessionPickerList = $("session-picker-list");
+  const sessionSearch = $("session-search");
+  const sessionSearchStatus = $("session-search-status");
   const showAllSessionsBtn = $("show-all-sessions");
   const pickerNewSessionBtn = $("picker-new-session");
 
@@ -45,6 +49,9 @@
   let availableSessions = [];
   let availableTotal = 0;
   let catalogTruncated = false;
+  let sessionQuery = "";
+  let catalogQuery = "";
+  let searchTimer = null;
 
   // QR / deep-link pairing: http://host:8787/?token=...
   // Phone scans QR from PC /pair — token is stored; no manual typing.
@@ -375,10 +382,27 @@
       title: item.title,
     }));
   }
+  function sessionMatchesLocal(item, q) {
+    if (!q) return true;
+    const hay = [item.title, item.cwd, item.preview, item.sessionId].join(" ").toLowerCase();
+    return hay.includes(q.toLowerCase());
+  }
+
+  function requestCatalog({ showAll = false, query = "" } = {}) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const payload = { type: "list_sessions", showAll: !!showAll, all: !!showAll };
+    if (query) payload.query = query;
+    ws.send(JSON.stringify(payload));
+  }
+
   function renderPicker() {
     if (!sessionPickerList) return;
     sessionPickerList.innerHTML = "";
-    for (const item of availableSessions) {
+    const q = sessionQuery.trim();
+    const rows = (!q || q.toLowerCase() === (catalogQuery || "").toLowerCase())
+      ? availableSessions
+      : availableSessions.filter((item) => sessionMatchesLocal(item, q));
+    for (const item of rows) {
       const btn = document.createElement("button");
       btn.className = "session-pick";
       const cwdShort = (item.cwd || "").split(/[/\\]/).pop() || "";
@@ -391,9 +415,21 @@
       btn.onclick = () => openCatalogItem(item);
       sessionPickerList.appendChild(btn);
     }
+    if (sessionSearchStatus) {
+      let status = "";
+      if (q && searchTimer) status = "Searching…";
+      else if (q && rows.length === 0) status = "No sessions match “" + q + "”";
+      else if (q) {
+        const n = q.toLowerCase() === (catalogQuery || "").toLowerCase() ? availableTotal : rows.length;
+        status = n === 1 ? "1 match" : n + " matches";
+      }
+      sessionSearchStatus.textContent = status;
+      sessionSearchStatus.classList.toggle("hidden", !status);
+    }
     if (showAllSessionsBtn) {
       const hidden = Math.max(0, availableTotal - availableSessions.length);
-      showAllSessionsBtn.classList.toggle("hidden", !(catalogTruncated || hidden > 0));
+      const show = !q && (catalogTruncated || hidden > 0);
+      showAllSessionsBtn.classList.toggle("hidden", !show);
       showAllSessionsBtn.textContent = hidden > 0 ? ("Show all sessions (" + hidden + " more)") : "Show all sessions";
     }
   }
@@ -622,6 +658,77 @@
     return el;
   }
 
+  if (window.visualViewport) {
+    const syncKb = () => {
+      const kb = Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop);
+      document.documentElement.style.setProperty("--kb", kb + "px");
+    };
+    window.visualViewport.addEventListener("resize", syncKb);
+    window.visualViewport.addEventListener("scroll", syncKb);
+    syncKb();
+  }
+
+  function renderUserQuestion(msg) {
+    if (!userQuestionEl) return;
+    const questions = msg.questions || [];
+    if (!questions.length) {
+      userQuestionEl.classList.add("hidden");
+      userQuestionEl.innerHTML = "";
+      return;
+    }
+    userQuestionEl.classList.remove("hidden");
+    const picks = {};
+    userQuestionEl.innerHTML = "<h3>Grok needs your answer</h3>";
+    questions.forEach((q, i) => {
+      const wrap = document.createElement("div");
+      wrap.className = "q";
+      wrap.innerHTML = "<div>" + escapeHtml(q.prompt || q.question || "") + "</div>";
+      const opts = q.options || [];
+      if (opts.length) {
+        const row = document.createElement("div");
+        row.className = "opts";
+        opts.forEach((o) => {
+          const b = document.createElement("button");
+          b.className = "opt";
+          b.textContent = o.label || o.id;
+          b.onclick = () => {
+            picks[i] = o.label || o.id;
+            [...row.children].forEach((c) => c.classList.remove("on"));
+            b.classList.add("on");
+          };
+          row.appendChild(b);
+        });
+        wrap.appendChild(row);
+      } else {
+        const inp = document.createElement("input");
+        inp.placeholder = "Type an answer…";
+        inp.oninput = () => { picks[i] = inp.value; };
+        wrap.appendChild(inp);
+      }
+      userQuestionEl.appendChild(wrap);
+    });
+    const actions = document.createElement("div");
+    actions.className = "opts";
+    const skip = document.createElement("button");
+    skip.className = "ghost small";
+    skip.textContent = "Skip";
+    skip.onclick = () => {
+      ws.send(JSON.stringify({ type: "user_question_answer", requestId: msg.requestId, answers: [] }));
+      userQuestionEl.classList.add("hidden");
+    };
+    const sendA = document.createElement("button");
+    sendA.className = "primary small";
+    sendA.textContent = "Send answer";
+    sendA.onclick = () => {
+      const answers = questions.map((_, i) => picks[i]).filter(Boolean);
+      ws.send(JSON.stringify({ type: "user_question_answer", requestId: msg.requestId, answers }));
+      userQuestionEl.classList.add("hidden");
+    };
+    actions.appendChild(skip);
+    actions.appendChild(sendA);
+    userQuestionEl.appendChild(actions);
+  }
+
   function updateMeta() {
     const s = getActive();
     cwdLabel.textContent = s ? s.cwd : "";
@@ -719,9 +826,13 @@
         break;
       }
       case "session_catalog": {
+        const incomingQ = (msg.query || "").trim();
+        if (incomingQ !== sessionQuery.trim()) break;
         availableSessions = msg.availableSessions || [];
         availableTotal = msg.availableTotal || availableSessions.length;
         catalogTruncated = !!msg.catalogTruncated;
+        catalogQuery = incomingQ;
+        searchTimer = null;
         showPicker();
         break;
       }
@@ -734,6 +845,15 @@
         renderTabs();
         renderChat();
         updateMeta();
+        if (catchUpBtn) catchUpBtn.disabled = false;
+        break;
+      }
+      case "user_question": {
+        stopThinkingCue();
+        renderUserQuestion(msg);
+        try {
+          if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+        } catch (_) {}
         break;
       }
       case "user_message": {
@@ -911,12 +1031,46 @@
   };
   if (showAllSessionsBtn) {
     showAllSessionsBtn.onclick = () => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      ws.send(JSON.stringify({ type: "list_sessions", showAll: true, all: true }));
+      sessionQuery = "";
+      catalogQuery = "";
+      if (sessionSearch) sessionSearch.value = "";
+      if (searchTimer) {
+        clearTimeout(searchTimer);
+        searchTimer = null;
+      }
+      requestCatalog({ showAll: true });
     };
   }
   if (pickerNewSessionBtn) {
     pickerNewSessionBtn.onclick = () => newSessionBtn.onclick();
+  }
+  if (sessionSearch) {
+    sessionSearch.addEventListener("input", () => {
+      sessionQuery = sessionSearch.value;
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        const q = sessionQuery.trim();
+        requestCatalog({ query: q, showAll: false });
+      }, 280);
+      renderPicker();
+    });
+    sessionSearch.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      if (searchTimer) clearTimeout(searchTimer);
+      searchTimer = null;
+      const q = sessionQuery.trim();
+      requestCatalog({ query: q, showAll: false });
+    });
+  }
+
+  if (catchUpBtn) {
+    catchUpBtn.onclick = () => {
+      const s = getActive();
+      if (!s || !ws || ws.readyState !== WebSocket.OPEN) return;
+      catchUpBtn.disabled = true;
+      ws.send(JSON.stringify({ type: "catch_up", sessionId: s.sessionId }));
+    };
   }
 
   ttsToggle.onclick = () => {
