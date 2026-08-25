@@ -133,6 +133,10 @@ class BridgeClient {
         send(JSONObject().put("type", "catch_up").put("sessionId", sessionId))
     }
 
+    fun leaveSession(sessionId: String) {
+        send(JSONObject().put("type", "leave_session").put("sessionId", sessionId))
+    }
+
     fun answerUserQuestion(requestId: String, answers: List<String>) {
         val arr = org.json.JSONArray()
         answers.forEach { arr.put(it) }
@@ -175,6 +179,11 @@ class BridgeClient {
                             catalogTruncated = o.optBoolean("catalogTruncated", false),
                             query = o.optString("query", ""),
                         ),
+                    )
+                }
+                "session_left" -> {
+                    _events.tryEmit(
+                        BridgeEvent.SessionLeft(sessionId = o.optString("sessionId", "")),
                     )
                 }
                 "session_created", "session_loaded" -> {
@@ -396,6 +405,8 @@ sealed class BridgeEvent {
         val catalogTruncated: Boolean,
         val query: String = "",
     ) : BridgeEvent()
+
+    data class SessionLeft(val sessionId: String) : BridgeEvent()
 
     data class SessionUpsert(
         val sessionId: String,

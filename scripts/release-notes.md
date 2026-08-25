@@ -8,6 +8,10 @@ irm https://github.com/ericleigh007/grok-remote/releases/latest/download/install
 
 (`pwsh`, not Windows PowerShell 5.1.)
 
+## Exit session
+
+Each remote tab has an **×**. That unloads the session from the phone (and the live bridge). The transcript stays on disk — pick it again from **Sessions**. Leaving the active session returns to the picker.
+
 ## Hold your place
 
 Long thinking (or a long reply) no longer yanks the list back to the top of the bubble. If you scroll to read, that position holds. A **Latest** down-arrow appears when you are not at the end.

@@ -542,6 +542,19 @@ class AcpClient:
     async def cancel(self, session_id: str) -> None:
         await self.notify("session/cancel", {"sessionId": session_id})
 
+    async def leave_session(self, session_id: str) -> bool:
+        """Drop a live remote tab. Disk transcript stays; picker can re-enter."""
+        info = self.sessions.get(session_id)
+        if info is None:
+            return False
+        if info.busy:
+            try:
+                await self.cancel(session_id)
+            except Exception as exc:
+                log.warning("leave_session cancel failed (%s)", exc)
+        self.sessions.pop(session_id, None)
+        return True
+
     # --- JSON-RPC transport --------------------------------------------
 
     async def request(

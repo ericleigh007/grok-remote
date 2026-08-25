@@ -18,6 +18,7 @@ Newest first. Tagged **[Releases](https://github.com/ericleigh007/grok-remote/re
 
 | When | What actually changed |
 |------|------------------------|
+| **v0.4.2** | **Exit session** from the remote tab list (× on the chip). Unloads that thread from the phone and the live bridge — disk stays, picker can re-enter. Leaving the active session returns to the session picker. |
 | **v0.4.1** | **Hold your place** while thinking (or a long reply) streams: the list no longer jumps to the top of the bubble after you scroll. A small **Latest** down-arrow appears when you are not at the end; tap it to pin to the newest line again. |
 | **v0.4.0** | **Catch up** (green EU emergency-exit running man) reloads the PC disk transcript when the desktop TUI is not live-synced. **Session search** in the picker (title, folder, alias, transcript). `ask_user_question` is relayed to the phone with a notification if the app is backgrounded; the composer stays above the keyboard. Watchdog is ports-only (no restart on `agentAlive=false` — that was HTTP 101 then 502). Bridge remains `grok agent serve` over WebSocket. |
 | **v0.3.0** | **Sessions on demand** (disk catalog, last-used / picker / **Show all** — not the old config whitelist). Optional **thinking beep**, TTS no longer re-reads the previous reply while thinking, top bar title is a full-width line. README claims checked against the code. |

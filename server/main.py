@@ -421,6 +421,24 @@ async def ws_endpoint(websocket: WebSocket):
                     asyncio.create_task(_run_prompt(session_id, text))
                 elif mtype == "cancel":
                     await agent.cancel(msg["sessionId"])
+                elif mtype in ("leave_session", "close_session"):
+                    sid = str(msg.get("sessionId") or "")
+                    if not sid:
+                        continue
+                    left = await agent.leave_session(sid)
+                    last = _read_last_session()
+                    if left and last and last.get("sessionId") == sid:
+                        try:
+                            LAST_SESSION_PATH.unlink(missing_ok=True)
+                        except Exception:
+                            log.warning("Could not clear %s", LAST_SESSION_PATH)
+                    await broadcast(
+                        {
+                            "type": "session_left",
+                            "sessionId": sid,
+                            "ok": left,
+                        }
+                    )
                 elif mtype == "catch_up":
                     sid = msg.get("sessionId")
                     if not sid:

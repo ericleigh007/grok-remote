@@ -188,6 +188,35 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(showSessionPicker = true) }
     }
 
+    fun leaveSession(id: String) {
+        if (!_state.value.sessions.containsKey(id)) return
+        dropSessionLocal(id)
+        bridge.leaveSession(id)
+    }
+
+    private fun dropSessionLocal(id: String) {
+        spokenAssistantIds.remove(id)
+        if (prefs.lastSessionId == id) prefs.lastSessionId = ""
+        val leavingActive = _state.value.activeSessionId == id
+        if (leavingActive) {
+            stopThinkingCue()
+            speech.stopSpeaking()
+        }
+        _state.update { st ->
+            val next = st.sessions - id
+            val pending = st.pendingQuestion?.takeIf { it.sessionId != id }
+            st.copy(
+                sessions = next,
+                activeSessionId = if (leavingActive) null else st.activeSessionId,
+                showSessionPicker = leavingActive || next.isEmpty() || st.showSessionPicker,
+                pendingQuestion = pending,
+                catchingUp = if (leavingActive) false else st.catchingUp,
+                openingSession = false,
+            )
+        }
+        if (_state.value.pendingQuestion == null) notifier.clear()
+    }
+
     fun dismissSessionPicker() {
         if (_state.value.sessions.isNotEmpty()) {
             _state.update { it.copy(showSessionPicker = false) }
@@ -457,6 +486,9 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                         showSessionPicker = true,
                     )
                 }
+            }
+            is BridgeEvent.SessionLeft -> {
+                if (ev.sessionId.isNotBlank()) dropSessionLocal(ev.sessionId)
             }
             is BridgeEvent.SessionUpsert -> {
                 val existing = _state.value.sessions[ev.sessionId]

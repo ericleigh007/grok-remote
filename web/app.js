@@ -455,6 +455,31 @@
     }
   }
 
+  function dropSessionLocal(sid) {
+    if (!sid || !sessions.has(sid)) return;
+    const wasActive = activeSessionId === sid;
+    sessions.delete(sid);
+    if (localStorage.getItem(LAST_SESSION_KEY) === sid) {
+      localStorage.removeItem(LAST_SESSION_KEY);
+    }
+    if (wasActive) {
+      activeSessionId = null;
+      followLatest = true;
+      showPicker();
+    }
+    renderTabs();
+    if (!wasActive) renderChat();
+    updateMeta();
+  }
+
+  function leaveSession(sid) {
+    if (!sid || !sessions.has(sid)) return;
+    dropSessionLocal(sid);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "leave_session", sessionId: sid }));
+    }
+  }
+
   function renderTabs() {
     sessionTabs.innerHTML = "";
     const pick = document.createElement("button");
@@ -465,10 +490,23 @@
     for (const s of sessions.values()) {
       const btn = document.createElement("button");
       btn.className = "tab" + (s.sessionId === activeSessionId ? " active" : "");
-      btn.innerHTML = (s.busy ? '<span class="busy-dot"></span>' : "") + escapeHtml(s.title || "Session");
+      const label = document.createElement("span");
+      label.innerHTML = (s.busy ? '<span class="busy-dot"></span>' : "") + escapeHtml(s.title || "Session");
+      btn.appendChild(label);
+      const x = document.createElement("span");
+      x.className = "tab-close";
+      x.textContent = "×";
+      x.title = "Exit session";
+      x.setAttribute("aria-label", "Exit session");
+      x.onclick = (ev) => {
+        ev.stopPropagation();
+        leaveSession(s.sessionId);
+      };
+      btn.appendChild(x);
       btn.onclick = () => {
         activeSessionId = s.sessionId;
         followLatest = true;
+        hidePicker();
         renderTabs();
         renderChat();
         updateMeta();
@@ -865,6 +903,10 @@
         catalogQuery = incomingQ;
         searchTimer = null;
         showPicker();
+        break;
+      }
+      case "session_left": {
+        dropSessionLocal(msg.sessionId);
         break;
       }
       case "session_created":

@@ -620,40 +620,53 @@ private fun SessionTabs(state: UiState, vm: GrokViewModel) {
         )
         state.sessions.values.forEach { s ->
             val selected = s.sessionId == state.activeSessionId
-            FilterChip(
-                selected = selected,
-                onClick = { vm.selectSession(s.sessionId) },
-                label = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (s.busy) {
-                            Box(
-                                Modifier
-                                    .padding(end = 6.dp)
-                                    .size(7.dp)
-                                    .background(Warn, CircleShape),
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                FilterChip(
+                    selected = selected,
+                    onClick = { vm.selectSession(s.sessionId) },
+                    label = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (s.busy) {
+                                Box(
+                                    Modifier
+                                        .padding(end = 6.dp)
+                                        .size(7.dp)
+                                        .background(Warn, CircleShape),
+                                )
+                            }
+                            Text(
+                                s.title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 140.dp),
                             )
                         }
-                        Text(
-                            s.title,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 140.dp),
-                        )
-                    }
-                },
-                colors = FilterChipDefaults.filterChipColors(
-                    containerColor = Panel2,
-                    labelColor = Muted,
-                    selectedContainerColor = Accent.copy(alpha = 0.18f),
-                    selectedLabelColor = TextPrimary,
-                ),
-                border = FilterChipDefaults.filterChipBorder(
-                    enabled = true,
-                    selected = selected,
-                    borderColor = Panel2,
-                    selectedBorderColor = Accent.copy(alpha = 0.5f),
-                ),
-            )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = Panel2,
+                        labelColor = Muted,
+                        selectedContainerColor = Accent.copy(alpha = 0.18f),
+                        selectedLabelColor = TextPrimary,
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = selected,
+                        borderColor = Panel2,
+                        selectedBorderColor = Accent.copy(alpha = 0.5f),
+                    ),
+                )
+                IconButton(
+                    onClick = { vm.leaveSession(s.sessionId) },
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Exit session",
+                        tint = Muted,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
         }
     }
     state.active?.cwd?.takeIf { it.isNotBlank() }?.let { cwd ->
