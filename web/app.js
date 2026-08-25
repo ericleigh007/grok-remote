@@ -12,6 +12,8 @@
   const authBtn = $("auth-btn");
   const authError = $("auth-error");
   const chat = $("chat");
+  const chatWrap = $("chat-wrap");
+  const latestBtn = $("scroll-latest");
   const input = $("input");
   const sendBtn = $("send-btn");
   const micBtn = $("mic-btn");
@@ -52,6 +54,8 @@
   let sessionQuery = "";
   let catalogQuery = "";
   let searchTimer = null;
+  let followLatest = true;
+  const NEAR_BOTTOM_PX = 120;
 
   // QR / deep-link pairing: http://host:8787/?token=...
   // Phone scans QR from PC /pair — token is stored; no manual typing.
@@ -89,7 +93,7 @@
   function micStatus(msg, isError) {
     if (isError) {
       appendMessageEl("system", msg);
-      chat.scrollTop = chat.scrollHeight;
+      if (followLatest) pinChatToLatest();
     }
     toolLine.textContent = msg;
     toolLine.classList.toggle("hidden", !msg);
@@ -355,13 +359,29 @@
     return activeSessionId ? sessions.get(activeSessionId) : null;
   }
 
+  function chatNearBottom() {
+    if (!chat) return true;
+    return chat.scrollHeight - chat.scrollTop - chat.clientHeight <= NEAR_BOTTOM_PX;
+  }
+  function updateLatestBtn() {
+    if (!latestBtn) return;
+    latestBtn.classList.toggle("hidden", followLatest);
+  }
+  function pinChatToLatest() {
+    followLatest = true;
+    if (chat) chat.scrollTop = chat.scrollHeight;
+    updateLatestBtn();
+  }
+
   function showPicker() {
     if (sessionPicker) sessionPicker.classList.remove("hidden");
-    if (chat) chat.classList.add("hidden");
+    if (chatWrap) chatWrap.classList.add("hidden");
+    else if (chat) chat.classList.add("hidden");
     renderPicker();
   }
   function hidePicker() {
     if (sessionPicker) sessionPicker.classList.add("hidden");
+    if (chatWrap) chatWrap.classList.remove("hidden");
     if (chat) chat.classList.remove("hidden");
   }
   function openCatalogItem(item) {
@@ -369,6 +389,7 @@
     if (item.sessionId && sessions.has(item.sessionId)) {
       activeSessionId = item.sessionId;
       localStorage.setItem(LAST_SESSION_KEY, item.sessionId);
+      followLatest = true;
       hidePicker();
       renderTabs();
       renderChat();
@@ -447,6 +468,7 @@
       btn.innerHTML = (s.busy ? '<span class="busy-dot"></span>' : "") + escapeHtml(s.title || "Session");
       btn.onclick = () => {
         activeSessionId = s.sessionId;
+        followLatest = true;
         renderTabs();
         renderChat();
         updateMeta();
@@ -457,15 +479,24 @@
 
   function renderChat() {
     const s = getActive();
+    const pin = followLatest;
+    const saved = chat ? chat.scrollTop : 0;
     chat.innerHTML = "";
     if (!s) {
       chat.innerHTML = '<div class="msg system">No session yet. Tap + Session.</div>';
+      if (pin) pinChatToLatest();
+      else updateLatestBtn();
       return;
     }
     for (const m of s.messages || []) {
       appendMessageEl(m.role, m.text, m.streaming);
     }
-    chat.scrollTop = chat.scrollHeight;
+    if (pin) pinChatToLatest();
+    else {
+      chat.scrollTop = saved;
+      followLatest = false;
+      updateLatestBtn();
+    }
   }
 
   function sanitizeHtml(html) {
@@ -841,6 +872,7 @@
         ensureSessionLocal(msg);
         activeSessionId = msg.sessionId;
         localStorage.setItem(LAST_SESSION_KEY, msg.sessionId);
+        followLatest = true;
         hidePicker();
         renderTabs();
         renderChat();
@@ -897,7 +929,7 @@
           toolLine.classList.remove("hidden");
           if (msg.sessionId === activeSessionId) {
             appendMessageEl("tool", `⚙ ${title}`);
-            chat.scrollTop = chat.scrollHeight;
+            if (followLatest) pinChatToLatest();
           }
         } else if (msg.updateType === "tool_call_update" && msg.tool) {
           if (msg.tool.status === "completed" || msg.tool.status === "failed") {
@@ -1071,6 +1103,15 @@
       catchUpBtn.disabled = true;
       ws.send(JSON.stringify({ type: "catch_up", sessionId: s.sessionId }));
     };
+  }
+  if (chat) {
+    chat.addEventListener("scroll", () => {
+      followLatest = chatNearBottom();
+      updateLatestBtn();
+    }, { passive: true });
+  }
+  if (latestBtn) {
+    latestBtn.onclick = () => pinChatToLatest();
   }
 
   ttsToggle.onclick = () => {

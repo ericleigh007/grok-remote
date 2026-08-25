@@ -19,7 +19,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -44,6 +46,7 @@ import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RecordVoiceOver
@@ -64,6 +67,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -104,10 +113,36 @@ import com.xai.grokremote.ui.theme.Warn
 fun ChatScreen(state: UiState, vm: GrokViewModel) {
     val listState = rememberLazyListState()
     val active = state.active
+    var followLatest by remember(state.activeSessionId) { mutableStateOf(true) }
+    val pin = remember { ProgrammaticScroll() }
+    val last = active?.items?.lastOrNull()
+    val lastLen = when (last) {
+        is TimelineItem.Thought -> last.text.length
+        is TimelineItem.Assistant -> last.text.length
+        else -> 0
+    }
+    val itemCount = active?.items?.size ?: 0
 
-    LaunchedEffect(active?.items?.size, active?.items?.lastOrNull()) {
-        val n = active?.items?.size ?: 0
-        if (n > 0) listState.animateScrollToItem(n - 1)
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress to listState.nearBottom() }
+            .collect { (inProgress, near) ->
+                if (pin.active) return@collect
+                followLatest = if (inProgress) {
+                    if (!near) false else followLatest
+                } else {
+                    near
+                }
+            }
+    }
+
+    LaunchedEffect(followLatest, itemCount, last?.id, lastLen) {
+        if (!followLatest || itemCount <= 0) return@LaunchedEffect
+        pin.active = true
+        try {
+            listState.scrollToLatest()
+        } finally {
+            pin.active = false
+        }
     }
 
     Column(
@@ -131,20 +166,44 @@ fun ChatScreen(state: UiState, vm: GrokViewModel) {
                     fontSize = 13.sp,
                 )
             }
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
+            Box(
+                Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                val items = active?.items.orEmpty()
-                if (items.isEmpty() && !state.openingSession) {
-                    item { EmptyState() }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    val items = active?.items.orEmpty()
+                    if (items.isEmpty() && !state.openingSession) {
+                        item { EmptyState() }
+                    }
+                    items(items, key = { it.id }) { item ->
+                        TimelineRow(item, onToggleThought = { vm.toggleThought(item.id) })
+                    }
                 }
-                items(items, key = { it.id }) { item ->
-                    TimelineRow(item, onToggleThought = { vm.toggleThought(item.id) })
+                if (!followLatest) {
+                    Surface(
+                        onClick = { followLatest = true },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(12.dp)
+                            .size(40.dp),
+                        shape = CircleShape,
+                        color = Accent,
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Scroll to latest",
+                                tint = TextPrimary,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                    }
                 }
             }
             state.pendingQuestion?.let { QuestionPromptCard(it, vm) }
@@ -907,4 +966,34 @@ private fun VoicePickerSheet(
             }
         }
     }
+}
+
+private class ProgrammaticScroll {
+    var active: Boolean = false
+}
+
+private fun LazyListState.nearBottom(thresholdPx: Int = 120): Boolean {
+    val info = layoutInfo
+    if (info.totalItemsCount == 0) return true
+    val lastVisible = info.visibleItemsInfo.lastOrNull() ?: return true
+    val lastIndex = info.totalItemsCount - 1
+    if (lastVisible.index < lastIndex) return false
+    val bottom = lastVisible.offset + lastVisible.size
+    return bottom <= info.viewportEndOffset + thresholdPx
+}
+
+private suspend fun LazyListState.scrollToLatest() {
+    val lastIndex = layoutInfo.totalItemsCount - 1
+    if (lastIndex < 0) return
+    val visibleLast = layoutInfo.visibleItemsInfo.lastOrNull()
+    if (visibleLast != null && visibleLast.index == lastIndex) {
+        val extra = (visibleLast.offset + visibleLast.size) - layoutInfo.viewportEndOffset
+        if (extra > 0) scrollBy(extra.toFloat())
+        return
+    }
+    scrollToItem(lastIndex)
+    withFrameNanos { }
+    val lastItem = layoutInfo.visibleItemsInfo.lastOrNull() ?: return
+    val extra = (lastItem.offset + lastItem.size) - layoutInfo.viewportEndOffset
+    if (extra > 0) scrollBy(extra.toFloat())
 }

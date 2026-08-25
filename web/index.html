@@ -59,7 +59,10 @@
       <button id="picker-new-session" class="ghost">New session</button>
     </div>
 
-    <main id="chat" class="chat" aria-live="polite"></main>
+    <div id="chat-wrap" class="chat-wrap">
+      <main id="chat" class="chat" aria-live="polite"></main>
+      <button id="scroll-latest" type="button" class="latest-btn hidden" title="Scroll to latest" aria-label="Scroll to latest">↓</button>
+    </div>
 
     <div id="tool-line" class="tool-line hidden"></div>
     <div id="user-question" class="user-question hidden"></div>
@@ -81,6 +84,6 @@
   <!-- cache-bust when UI changes; marked optional, app.js has a built-in fallback -->
   <script src="/static/vendor/marked.min.js?v=2"></script>
   <script src="/static/vendor/purify.min.js?v=2"></script>
-  <script src="/static/app.js?v=8"></script>
+  <script src="/static/app.js?v=9"></script>
 </body>
 </html>

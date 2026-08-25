@@ -8,6 +8,10 @@ irm https://github.com/ericleigh007/grok-remote/releases/latest/download/install
 
 (`pwsh`, not Windows PowerShell 5.1.)
 
+## Hold your place
+
+Long thinking (or a long reply) no longer yanks the list back to the top of the bubble. If you scroll to read, that position holds. A **Latest** down-arrow appears when you are not at the end.
+
 ## Catch up
 
 The desktop TUI and `grok agent serve` are two processes. They share `~/.grok/sessions` on disk, not a live stream. The green **emergency-exit running man** button reloads that disk transcript onto the phone (then best-effort ACP `session/resume`).
