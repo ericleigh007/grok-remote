@@ -1,6 +1,6 @@
 # Grok Remote
 
-**Control local [Grok Build](https://x.ai) from your phone — without forking Grok, without reverse-engineering the TUI, and without exposing your agent to the public internet.**
+**Control local [Grok Build](https://x.ai) from your phone or a Windows tablet — without forking Grok, without reverse-engineering the TUI, and without exposing your agent to the public internet.**
 
 Grok Remote is a thin, open-source remote for **your own machine**. It uses the same **official** surfaces xAI already ships:
 
@@ -8,7 +8,7 @@ Grok Remote is a thin, open-source remote for **your own machine**. It uses the 
 - Session resume / history that already lives under `~/.grok`  
 - Your existing login (OAuth or API key) on the PC  
 
-Nothing here patches Grok. The bridge talks to stock `grok agent serve` over **WebSocket** (`:2419`). Unattended remote is not identical to the desktop TUI: `always_approve` is on by default, in-person prompts (`ask_user_question`) are **relayed to the phone**, and the phone only **opens a session when you pick it** (or re-enters the last one). The desktop TUI is a separate process — use **Catch up** to reload the on-disk transcript.
+Nothing here patches Grok. The bridge talks to stock `grok agent serve` over **WebSocket** (`:2419`). Unattended remote is not identical to the desktop TUI: `always_approve` is on by default, in-person prompts (`ask_user_question`) are **relayed to the phone or tablet**, and the remote only **opens a session when you pick it** (or re-enters the last one). The desktop TUI is a separate process — use **Catch up** to reload the on-disk transcript. Leave the grok-main PC powered at home; Tailscale reaches it from a weekend tablet without exposing a port on the public internet.
 
 ---
 
@@ -18,6 +18,7 @@ Newest first. Tagged **[Releases](https://github.com/ericleigh007/grok-remote/re
 
 | When | What actually changed |
 |------|------------------------|
+| **v0.5.0** | **Windows-native app** (WinUI 3 + WebView2) for tablets and laptops — including **ARM64**. Same Tailscale session as the phone, but **Windows Natural voices** (WinRT), not browser `speechSynthesis`. Take a Snapdragon tablet on a weekend; the grok-main PC stays home. Prebuilt `grok-remote-desktop-win-arm64.zip` / `win-x64.zip` on the release. |
 | **v0.4.2** | **Exit session** from the remote tab list (× on the chip). Unloads that thread from the phone and the live bridge — disk stays, picker can re-enter. Leaving the active session returns to the session picker. |
 | **v0.4.1** | **Hold your place** while thinking (or a long reply) streams: the list no longer jumps to the top of the bubble after you scroll. A small **Latest** down-arrow appears when you are not at the end; tap it to pin to the newest line again. |
 | **v0.4.0** | **Catch up** (green EU emergency-exit running man) reloads the PC disk transcript when the desktop TUI is not live-synced. **Session search** in the picker (title, folder, alias, transcript). `ask_user_question` is relayed to the phone with a notification if the app is backgrounded; the composer stays above the keyboard. Watchdog is ports-only (no restart on `agentAlive=false` — that was HTTP 101 then 502). Bridge remains `grok agent serve` over WebSocket. |
@@ -54,7 +55,7 @@ Grok Build is excellent at the desk. Away from the desk, you still want:
 - **Voice** that isn’t a browser afterthought  
 - **Secure** access that doesn’t open a random port on the internet  
 
-Grok Remote is that remote: a small PC bridge + Android app (and a web fallback), all on top of **standard Grok agent serve**.
+Grok Remote is that remote: a small PC bridge + Android app + **Windows tablet/laptop app**, all on top of **standard Grok agent serve**. The web UI remains a fallback; voice is better in the native clients.
 
 ---
 
@@ -72,6 +73,7 @@ Grok Remote is that remote: a small PC bridge + Android app (and a web fallback)
 | **Phone prompts** | `ask_user_question` on the device; notification if the app is in the background |
 | **TUI-shaped stream** | Thinking, tools, markdown replies, cancel + send-while-busy (interrupt) |
 | **STT / TTS** | System recognizer + system TTS with **voice picker**; optional thinking beep |
+| **Windows desktop** | WinUI 3 + WebView2 for tablets/laptops — same Tailscale UI, **WinRT Natural voices**, native **x64 and ARM64** |
 
 ---
 
@@ -109,7 +111,8 @@ Grok Remote is that remote: a small PC bridge + Android app (and a web fallback)
 
 - Windows PC with **[Grok Build](https://docs.x.ai)** installed and working (`grok` on PATH, already logged in).  
 - Phone: Android 8+ for the app (or any modern mobile browser for the web UI).  
-- Remote access: **[Tailscale](https://tailscale.com/)** on PC + phone (free Personal plan is enough).  
+- Optional: a **Windows tablet or laptop** (x64 or ARM64) with Tailscale — native app on [Releases](https://github.com/ericleigh007/grok-remote/releases/latest).  
+- Remote access: **[Tailscale](https://tailscale.com/)** on the grok-main PC **and** the phone/tablet (free Personal plan is enough).  
   *WireGuard, ZeroTier, Cloudflare Tunnel, etc. can substitute; setup steps below are Tailscale-only.*  
 - **PowerShell 7** (`pwsh`) — [install](https://aka.ms/powershell) if `pwsh` is not on PATH. Windows PowerShell 5.1 is not used.  
 - **Python 3.11+** — the installer will add it with `winget` if it is missing. You only need to install Python yourself when building from source.
@@ -200,7 +203,18 @@ The release APK is sideloaded and not Play-signed, so Play Protect often flags i
 
 After it installs, open **Grok Remote** and continue with pairing below. You can turn Auto Blocker back on afterward if you want; leave **Install unknown apps** enabled for Chrome if you plan to take updates from `/dl`.
 
-Web UI fallback (no APK): `https://YOUR-PC.YOUR-TAILNET.ts.net/` in Chrome. Voice is better in the native app.
+Web UI fallback (no APK): `https://YOUR-PC.YOUR-TAILNET.ts.net/` in Chrome. Voice is better in the native Android app.
+
+### Windows tablet / laptop (away from the grok-main PC)
+
+For a weekend (or the Algarve) when you do not want to go home just to drive Grok: leave the PC on, take a Windows tablet with Tailscale.
+
+1. Download **`grok-remote-desktop-win-arm64.zip`** (Snapdragon / ARM) or **`win-x64.zip`** from [Releases](https://github.com/ericleigh007/grok-remote/releases/latest).  
+2. Extract the folder. Run `GrokRemote.Desktop.exe`.  
+3. First launch: Tailscale HTTPS origin (`https://YOUR-PC.YOUR-TAILNET.ts.net`), then pair with the token (or a `/pair` URL).  
+4. Voices come from **Windows Natural / WinRT**, not the browser. Touch and mouse both work.
+
+Source and `publish.ps1`: [`windows/README.md`](windows/README.md). Needs WebView2 (Edge). Self-contained publish does **not** need a separate .NET install on the tablet.
 
 ---
 
@@ -385,7 +399,7 @@ USB still works if you prefer:
 adb install -r android\app\build\outputs\apk\debug\app-debug.apk
 ```
 
-Package a GitHub release (APK + PC zip + `install.ps1`):
+Package a GitHub release (APK + PC zip + Windows desktop ARM64/x64 + `install.ps1`):
 
 ```powershell
 pwsh -ExecutionPolicy Bypass -File .\scripts\package-release.ps1
@@ -401,11 +415,12 @@ python -m unittest discover -s tests -v
 
 ## Day-to-day use
 
-1. Leave the PC powered. The **GrokRemote** service keeps `grok agent serve` + the bridge up (watchdog every minute).  
-2. Phone: Tailscale **Connected**.  
-3. Open the app (or HTTPS bookmark). Re-enters the last session, or shows the picker.  
+1. Leave the grok-main PC powered. The **GrokRemote** service keeps `grok agent serve` + the bridge up (watchdog every minute).  
+2. Phone or Windows tablet: Tailscale **Connected**.  
+3. Open the Android app, or `GrokRemote.Desktop.exe` (ARM64 zip on Snapdragon tablets). Re-enters the last session, or shows the picker.  
 4. Chat, expand thinking, watch tools, cancel or inject midstream. Unused sessions are not loaded.  
-5. After a new GitHub release: re-run `install.ps1` (or `publish-apk.ps1` from source) → PC `/pair` **Install** QR (or phone `/dl`) → install. Same Auto Blocker / Play Protect notes as first sideload.
+5. Weekend / away: you do not need to go home to type at the TUI. The tablet talks to the PC over Tailscale; Catch up reloads disk if you also used the desktop TUI.  
+6. After a new GitHub release: re-run `install.ps1` on the PC → phone `/dl` or the new desktop zip. Same Auto Blocker / Play Protect notes as first Android sideload.
 
 ---
 

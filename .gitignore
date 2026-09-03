@@ -34,6 +34,10 @@ tools/*.dll
 tools/GrokRemote.xml
 tools/service-user.json
 
+# Windows desktop (WebView2 shell)
+windows/**/bin/
+windows/**/obj/
+
 # OS / editor
 .DS_Store
 Thumbs.db

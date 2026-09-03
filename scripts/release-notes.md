@@ -1,12 +1,21 @@
-Prebuilt **__VERSION__** — same tree as `master`. PC zip + APK + `install.ps1`.
+Prebuilt **__VERSION__** — same tree as `master`. PC zip + APK + **Windows desktop (ARM64 and x64)** + `install.ps1`.
 
-The bridge still talks to stock **`grok agent serve` over WebSocket** (`:2419`). Phone clients use the bridge WebSocket (`:8787/ws`).
+The bridge still talks to stock **`grok agent serve` over WebSocket** (`:2419`). Phone and Windows-tablet clients use the bridge WebSocket (`:8787/ws`).
 
 ```powershell
 irm https://github.com/ericleigh007/grok-remote/releases/latest/download/install.ps1 | iex
 ```
 
 (`pwsh`, not Windows PowerShell 5.1.)
+
+## Windows-native app (tablets, including ARM)
+
+Leave the grok-main PC at home. On a weekend — or from the other side of the Mediterranean — open **Grok Remote** on a Windows tablet over Tailscale and keep the same sessions going.
+
+- **WinUI 3 + WebView2** (not WPF). Touch and mouse.  
+- **WinRT Natural voices**, not browser `speechSynthesis`.  
+- Native **`grok-remote-desktop-win-arm64.zip`** for Snapdragon tablets, **`win-x64.zip`** for typical laptops. Extract and run `GrokRemote.Desktop.exe`.  
+- First run: `https://YOUR-PC.YOUR-TAILNET.ts.net`, then the usual token.
 
 ## Exit session
 

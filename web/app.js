@@ -89,6 +89,17 @@
   let recognition = null;
   let listening = false;
   const secureOk = window.isSecureContext === true;
+  const nativeHost = !!(window.GrokNative && window.GrokNative.tts) ||
+    !!(window.chrome && chrome.webview && typeof chrome.webview.postMessage === "function");
+  let nativeVoices = [];
+
+  function nativePost(msg) {
+    try {
+      if (window.chrome && chrome.webview && chrome.webview.postMessage) {
+        chrome.webview.postMessage(JSON.stringify(msg));
+      }
+    } catch (_) { /* ignore */ }
+  }
 
   function micStatus(msg, isError) {
     if (isError) {
@@ -99,7 +110,11 @@
     toolLine.classList.toggle("hidden", !msg);
   }
 
-  if (!secureOk) {
+  if (nativeHost) {
+    micBtn.disabled = false;
+    micBtn.title = "Hold or tap to talk (Windows speech)";
+    micBtn.removeAttribute("aria-disabled");
+  } else if (!secureOk) {
     micBtn.disabled = true;
     micBtn.title = "Mic needs HTTPS — open via Tailscale Serve URL, not http://100.x";
     micBtn.setAttribute("aria-disabled", "true");
@@ -160,7 +175,9 @@
 
   function setTtsUi() {
     ttsToggle.textContent = ttsOn ? "TTS on" : "TTS off";
-    if (ttsVoiceSelect) ttsVoiceSelect.disabled = !ttsOn || !window.speechSynthesis;
+    if (ttsVoiceSelect) {
+      ttsVoiceSelect.disabled = !ttsOn || (!nativeHost && !window.speechSynthesis);
+    }
   }
   function setThinkBeepUi() {
     if (!thinkBeepToggle) return;
@@ -243,6 +260,14 @@
   }
 
   function listVoices() {
+    if (nativeHost) {
+      return nativeVoices.map((v) => ({
+        name: v.name,
+        lang: v.lang,
+        voiceURI: v.id,
+        localService: !!v.local,
+      }));
+    }
     if (!window.speechSynthesis) return [];
     return speechSynthesis.getVoices() || [];
   }
@@ -258,7 +283,8 @@
   }
 
   function populateVoiceSelect() {
-    if (!ttsVoiceSelect || !window.speechSynthesis) return;
+    if (!ttsVoiceSelect) return;
+    if (!nativeHost && !window.speechSynthesis) return;
     const voices = listVoices();
     const prev = ttsVoiceSelect.value || localStorage.getItem(TTS_VOICE_KEY) || "";
     ttsVoiceSelect.innerHTML = "";
@@ -300,7 +326,35 @@
     return pickBestVoice(voices);
   }
 
-  if (window.speechSynthesis) {
+  if (nativeHost) {
+    window.addEventListener("grok-native", (ev) => {
+      const msg = (ev && ev.detail) || {};
+      if (msg.type === "voices" && Array.isArray(msg.voices)) {
+        nativeVoices = msg.voices;
+        populateVoiceSelect();
+      } else if (msg.type === "stt_partial" && msg.text) {
+        input.placeholder = msg.text;
+      } else if (msg.type === "stt_final" && msg.text) {
+        input.value = (input.value ? input.value + " " : "") + String(msg.text).trim();
+        autosize();
+      } else if (msg.type === "stt_listening") {
+        listening = !!msg.listening;
+        micBtn.classList.toggle("listening", listening);
+        if (listening) micStatus("Listening… tap mic again to stop", false);
+        else {
+          input.placeholder = "Message Grok… (or use mic)";
+          toolLine.classList.add("hidden");
+          if (input.value.trim()) sendPrompt();
+        }
+      } else if (msg.type === "stt_error" && msg.text) {
+        listening = false;
+        micBtn.classList.remove("listening");
+        micStatus(String(msg.text), true);
+      }
+    });
+    nativePost({ type: "list_voices" });
+    setTimeout(() => nativePost({ type: "list_voices" }), 400);
+  } else if (window.speechSynthesis) {
     populateVoiceSelect();
     // Edge/Chrome load voices asynchronously
     speechSynthesis.addEventListener("voiceschanged", populateVoiceSelect);
@@ -309,10 +363,26 @@
     setTimeout(populateVoiceSelect, 1000);
   }
 
+  function stopSpeak() {
+    speaking = false;
+    if (nativeHost) nativePost({ type: "stop" });
+    else if (window.speechSynthesis) window.speechSynthesis.cancel();
+  }
+
   function speak(text) {
-    if (!ttsOn || !text || !window.speechSynthesis) return;
+    if (!ttsOn || !text) return;
     const clean = text.replace(/```[\s\S]*?```/g, " code block ").trim();
     if (!clean) return;
+    if (nativeHost) {
+      speaking = true;
+      nativePost({
+        type: "speak",
+        text: clean.slice(0, 1400),
+        voice: (ttsVoiceSelect && ttsVoiceSelect.value) || localStorage.getItem(TTS_VOICE_KEY) || "",
+      });
+      return;
+    }
+    if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(clean.slice(0, 1200));
     const voice = currentVoice();
@@ -932,7 +1002,7 @@
       }
       case "user_message": {
         pendingSpeak = "";
-        window.speechSynthesis?.cancel();
+        stopSpeak();
         startThinkingCue();
         const s = ensureSessionLocal({ sessionId: msg.sessionId });
         s.busy = true;
@@ -979,7 +1049,7 @@
           }
         } else if (msg.updateType === "agent_thought_chunk") {
           // Thinking = new turn. Do not keep reading the previous reply.
-          if (!pendingSpeak) window.speechSynthesis?.cancel();
+          if (!pendingSpeak) stopSpeak();
           startThinkingCue();
         }
         if (msg.sessionId === activeSessionId) updateMeta();
@@ -1048,7 +1118,7 @@
     updateMeta();
     input.value = "";
     autosize();
-    window.speechSynthesis?.cancel();
+    stopSpeak();
     pendingSpeak = "";
     startThinkingCue();
     ws.send(JSON.stringify({ type: "prompt", sessionId: s.sessionId, text }));
@@ -1091,7 +1161,7 @@
   cancelBtn.onclick = () => {
     const s = getActive();
     stopThinkingCue();
-    window.speechSynthesis?.cancel();
+    stopSpeak();
     if (s && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "cancel", sessionId: s.sessionId }));
     }
@@ -1160,7 +1230,7 @@
     ttsOn = !ttsOn;
     localStorage.setItem(TTS_KEY, ttsOn ? "1" : "0");
     setTtsUi();
-    if (!ttsOn) window.speechSynthesis?.cancel();
+    if (!ttsOn) stopSpeak();
   };
 
   if (thinkBeepToggle) {
@@ -1183,13 +1253,26 @@
         localStorage.setItem(TTS_VOICE_KEY, ttsVoiceSelect.value);
       }
       // Quick sample so you hear the change immediately
-      if (ttsOn && window.speechSynthesis) {
-        speak("Voice selected.");
+      if (ttsOn) {
+        if (nativeHost) {
+          nativePost({ type: "set_voice", voice: ttsVoiceSelect.value });
+          nativePost({ type: "preview", voice: ttsVoiceSelect.value });
+        } else if (window.speechSynthesis) {
+          speak("Voice selected.");
+        }
       }
     });
   }
 
   micBtn.onclick = () => {
+    if (nativeHost) {
+      if (listening) nativePost({ type: "listen_stop" });
+      else {
+        nativePost({ type: "stop" });
+        nativePost({ type: "listen_start" });
+      }
+      return;
+    }
     if (!secureOk) {
       micStatus(
         "Mic needs HTTPS. On the PC run: tailscale serve --bg http://127.0.0.1:8787 — then re-scan QR from http://127.0.0.1:8787/pair",
@@ -1206,7 +1289,7 @@
       return;
     }
     try {
-      window.speechSynthesis?.cancel();
+      stopSpeak();
       recognition.start(); // toggle: tap once to start, tap again to stop
     } catch (e) {
       listening = false;

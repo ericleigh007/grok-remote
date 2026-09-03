@@ -4,6 +4,7 @@
 param(
   [string]$Version = "",
   [switch]$SkipBuild,
+  [switch]$SkipDesktop,
   [switch]$SkipUpload,
   [switch]$Draft
 )
@@ -28,10 +29,11 @@ $ApkOut = Join-Path $Dist "grok-remote.apk"
 
 Write-Host "Packaging $Tag"
 
+$pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+if (-not $pwsh) { throw "PowerShell 7 (pwsh) is required." }
+
 if (-not $SkipBuild) {
   $publish = Join-Path $Root "scripts\publish-apk.ps1"
-  $pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
-  if (-not $pwsh) { throw "PowerShell 7 (pwsh) is required." }
   & $pwsh -NoProfile -ExecutionPolicy Bypass -File $publish
   if ($LASTEXITCODE -ne 0) { throw "publish-apk.ps1 failed: $LASTEXITCODE" }
 }
@@ -64,7 +66,8 @@ $names = @(
   "supervise.ps1",
   "tools",
   "VERSION",
-  "README.md"
+  "README.md",
+  "windows"
 )
 foreach ($name in $names) {
   $src = Join-Path $Root $name
@@ -74,6 +77,10 @@ foreach ($name in $names) {
 
 # Strip Python caches copied from server/
 Get-ChildItem (Join-Path $Stage "server") -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
+$stageWin = Join-Path $Stage "windows"
+if (Test-Path $stageWin) {
+  Get-ChildItem $stageWin -Recurse -Directory | Where-Object { $_.Name -in @("bin", "obj") } | Remove-Item -Recurse -Force
+}
 $stageTools = Join-Path $Stage "tools"
 if (Test-Path $stageTools) {
   Get-ChildItem $stageTools -File | Where-Object { $_.Extension -match '\.(exe|dll|json|xml)$' } | Remove-Item -Force
@@ -87,6 +94,27 @@ Compress-Archive -Path $Stage -DestinationPath $Zip -Force
 
 $apkItem = Get-Item $ApkOut
 $zipItem = Get-Item $Zip
+$assets = @($Zip, $ApkOut, (Join-Path $Root "install.ps1"))
+
+$deskScript = Join-Path $Root "windows\publish.ps1"
+if (-not $SkipDesktop -and (Test-Path $deskScript)) {
+  Write-Host "Publishing Windows desktop (win-x64 + win-arm64)..."
+  & $pwsh -NoProfile -ExecutionPolicy Bypass -File $deskScript -Rid both
+  if ($LASTEXITCODE -ne 0) { throw "windows/publish.ps1 failed: $LASTEXITCODE" }
+  foreach ($rid in @("win-arm64", "win-x64")) {
+    $folder = Join-Path $Dist "grok-remote-desktop-$rid"
+    if (-not (Test-Path (Join-Path $folder "GrokRemote.Desktop.exe"))) {
+      throw "Desktop publish missing $folder\GrokRemote.Desktop.exe"
+    }
+    $deskZip = Join-Path $Dist "grok-remote-desktop-$rid.zip"
+    if (Test-Path $deskZip) { Remove-Item $deskZip -Force }
+    Compress-Archive -Path $folder -DestinationPath $deskZip -Force
+    $assets += $deskZip
+    $item = Get-Item $deskZip
+    Write-Host ("  {0}  ({1:N1} MB)" -f $item.FullName, ($item.Length / 1MB))
+  }
+}
+
 Write-Host ""
 Write-Host "Artifacts:"
 Write-Host ("  {0}  ({1:N1} MB)" -f $zipItem.FullName, ($zipItem.Length / 1MB))
@@ -111,11 +139,11 @@ $existing = $null
 $existing = & gh release view $Tag --repo ericleigh007/grok-remote 2>$null
 if ($LASTEXITCODE -eq 0 -and $existing) {
   Write-Host "Release $Tag already exists - uploading assets"
-  & gh release upload $Tag $Zip $ApkOut (Join-Path $Root "install.ps1") --repo ericleigh007/grok-remote --clobber
+  & gh release upload $Tag @assets --repo ericleigh007/grok-remote --clobber
 } else {
   $createArgs = @(
-    "release", "create", $Tag,
-    $Zip, $ApkOut, (Join-Path $Root "install.ps1"),
+    "release", "create", $Tag
+  ) + $assets + @(
     "--repo", "ericleigh007/grok-remote",
     "--title", "Grok Remote $Tag",
     "--notes-file", $notesPath
