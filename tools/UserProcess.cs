@@ -3,6 +3,7 @@
 //   1) MSV1_0 S4U logon — works while the user is logged off
 //   2) WTSQueryUserToken — interactive session of that user
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -363,15 +364,17 @@ namespace GrokRemote
             EnablePrivilege("SeImpersonatePrivilege");
             EnablePrivilege("SeTcbPrivilege");
             LastError = "";
-            IntPtr t = TryS4U(domain, user);
+            // Prefer the interactive session: CreateEnvironmentBlock then has the
+            // real USERPROFILE. S4U network logons often resolve to C:\Users\Default,
+            // so grok cannot see auth.json or ~/.grok/sessions.
+            IntPtr t = TrySessionToken(domain, user);
             if (t != IntPtr.Zero) return t;
-            string s4uErr = LastError;
-            t = TrySessionToken(domain, user);
+            string sessErr = LastError;
+            t = TryS4U(domain, user);
             if (t != IntPtr.Zero) return t;
-            LastError = "S4U: " + s4uErr + " | session: " + LastError;
+            LastError = "session: " + sessErr + " | S4U: " + LastError;
             if (!string.IsNullOrEmpty(sid))
             {
-                // last resort: any process already running as that SID (explorer, etc.)
                 t = TryTokenFromProcessSid(sid);
                 if (t != IntPtr.Zero) return t;
             }
@@ -416,6 +419,11 @@ namespace GrokRemote
 
         public static int Start(IntPtr token, string exe, string arguments, string cwd, string outLog, string errLog)
         {
+            return Start(token, exe, arguments, cwd, outLog, errLog, null, null, null);
+        }
+
+        public static int Start(IntPtr token, string exe, string arguments, string cwd, string outLog, string errLog, string userProfile, string userName, string userDomain)
+        {
             if (token == IntPtr.Zero) throw new InvalidOperationException("No user token: " + LastError);
             EnablePrivilege("SeAssignPrimaryTokenPrivilege");
             EnablePrivilege("SeIncreaseQuotaPrivilege");
@@ -436,6 +444,13 @@ namespace GrokRemote
             IntPtr env;
             if (!CreateEnvironmentBlock(out env, token, false))
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateEnvironmentBlock");
+            IntPtr overlay = IntPtr.Zero;
+            if (!string.IsNullOrEmpty(userProfile))
+            {
+                overlay = OverlayProfileEnv(env, userProfile, userName, userDomain);
+                DestroyEnvironmentBlock(env);
+                env = overlay;
+            }
 
             string cmd = "\"" + exe + "\"";
             if (!string.IsNullOrEmpty(arguments)) cmd += " " + arguments;
@@ -454,13 +469,77 @@ namespace GrokRemote
             uint flags = CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW;
             bool ok = CreateProcessAsUser(token, exe, cl, IntPtr.Zero, IntPtr.Zero, true, flags, env, cwd, ref si, out pi);
             int err = Marshal.GetLastWin32Error();
-            DestroyEnvironmentBlock(env);
+            if (overlay != IntPtr.Zero) Marshal.FreeHGlobal(overlay);
+            else DestroyEnvironmentBlock(env);
             CloseHandle(hOut);
             CloseHandle(hErr);
             if (!ok) throw new Win32Exception(err, "CreateProcessAsUser " + exe + " (" + LastError + ")");
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
             return pi.dwProcessId;
+        }
+
+        static IntPtr OverlayProfileEnv(IntPtr env, string userProfile, string userName, string userDomain)
+        {
+            var map = ParseEnvBlock(env);
+            string home = userProfile.TrimEnd('\\');
+            string drive = Path.GetPathRoot(home) ?? "C:\\";
+            if (drive.EndsWith("\\")) drive = drive.TrimEnd('\\');
+            string path = home.Length > drive.Length ? home.Substring(drive.Length) : "\\";
+            if (!path.StartsWith("\\")) path = "\\" + path;
+            map["USERPROFILE"] = home;
+            map["HOME"] = home;
+            map["HOMEDRIVE"] = drive;
+            map["HOMEPATH"] = path;
+            map["APPDATA"] = Path.Combine(home, "AppData", "Roaming");
+            map["LOCALAPPDATA"] = Path.Combine(home, "AppData", "Local");
+            map["GROK_HOME"] = Path.Combine(home, ".grok");
+            if (!string.IsNullOrEmpty(userName)) map["USERNAME"] = userName;
+            if (!string.IsNullOrEmpty(userDomain))
+            {
+                map["USERDOMAIN"] = userDomain;
+                map["USERDOMAIN_ROAMINGPROFILE"] = userDomain;
+            }
+            string grokBin = Path.Combine(home, ".grok", "bin");
+            string pathVar;
+            if (!map.TryGetValue("Path", out pathVar)) pathVar = "";
+            if (pathVar.IndexOf(grokBin, StringComparison.OrdinalIgnoreCase) < 0)
+                pathVar = string.IsNullOrEmpty(pathVar) ? grokBin : (grokBin + ";" + pathVar);
+            map["Path"] = pathVar;
+            return BuildEnvBlock(map);
+        }
+
+        static Dictionary<string, string> ParseEnvBlock(IntPtr env)
+        {
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            int offset = 0;
+            while (true)
+            {
+                string s = Marshal.PtrToStringUni(IntPtr.Add(env, offset));
+                if (string.IsNullOrEmpty(s)) break;
+                offset += (s.Length + 1) * 2;
+                int eq = s.IndexOf('=');
+                if (eq <= 0) continue;
+                d[s.Substring(0, eq)] = s.Substring(eq + 1);
+            }
+            return d;
+        }
+
+        static IntPtr BuildEnvBlock(Dictionary<string, string> map)
+        {
+            var sb = new StringBuilder();
+            foreach (var kv in map)
+            {
+                sb.Append(kv.Key);
+                sb.Append('=');
+                sb.Append(kv.Value ?? "");
+                sb.Append('\0');
+            }
+            sb.Append('\0');
+            byte[] bytes = Encoding.Unicode.GetBytes(sb.ToString());
+            IntPtr p = Marshal.AllocHGlobal(bytes.Length);
+            Marshal.Copy(bytes, 0, p, bytes.Length);
+            return p;
         }
 
         public static bool CurrentProcessIsSystem()

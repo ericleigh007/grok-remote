@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import io
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import subprocess
@@ -757,7 +759,15 @@ async def pair_page(request: Request):
     dl = download_page_url(request)
     info = _apk_info()
     apk_meta = (
-        f"{info['sizeMB']} MB · {info['modifiedIso']}"
+        " · ".join(
+            part
+            for part in (
+                f"v{info['versionName']}" if info.get("versionName") else None,
+                f"{info['sizeMB']} MB",
+                info.get("modifiedIso"),
+            )
+            if part
+        )
         if info.get("available")
         else "No APK published yet — run scripts/publish-apk.ps1"
     )
@@ -882,11 +892,90 @@ def _resolve_apk() -> Optional[Path]:
     return None
 
 
+_apk_ver_cache: tuple[str, int, int, Optional[str], Optional[int]] | None = None
+
+
+def _apk_version(path: Path) -> tuple[Optional[str], Optional[int]]:
+    """versionName / versionCode of the APK that /dl actually serves."""
+    global _apk_ver_cache
+    st = path.stat()
+    key = (str(path), int(st.st_mtime), st.st_size)
+    if _apk_ver_cache and _apk_ver_cache[:3] == key:
+        return _apk_ver_cache[3], _apk_ver_cache[4]
+    name, code = _apk_version_from_aapt(path)
+    if not name:
+        name, code = _apk_version_from_latest_json()
+    if not name:
+        name, code = _apk_version_from_gradle(path)
+    _apk_ver_cache = (*key, name, code)
+    return name, code
+
+
+def _apk_version_from_aapt(path: Path) -> tuple[Optional[str], Optional[int]]:
+    sdk = Path(os.environ.get("ANDROID_HOME") or (Path.home() / "AppData" / "Local" / "Android" / "Sdk"))
+    tools = sdk / "build-tools"
+    if not tools.is_dir():
+        return None, None
+    aapts = sorted(tools.glob("*/aapt.exe"), reverse=True) + sorted(tools.glob("*/aapt"), reverse=True)
+    if not aapts:
+        return None, None
+    try:
+        out = subprocess.check_output(
+            [str(aapts[0]), "dump", "badging", str(path)],
+            stderr=subprocess.DEVNULL,
+            timeout=8,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None, None
+    m = re.search(r"versionCode='(\d+)'\s+versionName='([^']*)'", out)
+    if not m:
+        return None, None
+    return m.group(2), int(m.group(1))
+
+
+def _apk_version_from_latest_json() -> tuple[Optional[str], Optional[int]]:
+    meta = RELEASES_DIR / "latest.json"
+    if not meta.is_file():
+        return None, None
+    try:
+        data = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, None
+    name = str(data.get("versionName") or "").strip() or None
+    code_raw = data.get("versionCode")
+    try:
+        code = int(code_raw) if code_raw is not None and str(code_raw).strip() != "" else None
+    except (TypeError, ValueError):
+        code = None
+    return name, code
+
+
+def _apk_version_from_gradle(path: Path) -> tuple[Optional[str], Optional[int]]:
+    gradle = ROOT / "android" / "app" / "build.gradle.kts"
+    if not gradle.is_file():
+        return None, None
+    text = gradle.read_text(encoding="utf-8", errors="ignore")
+    name_m = re.search(r'versionName\s*=\s*"([^"]+)"', text)
+    code_m = re.search(r"versionCode\s*=\s*(\d+)", text)
+    name = name_m.group(1) if name_m else None
+    code = int(code_m.group(1)) if code_m else None
+    if name and "debug" in path.name.lower() and not name.endswith("-debug"):
+        name = f"{name}-debug"
+    return name, code
+
+
 def _apk_info() -> dict[str, Any]:
     path = _resolve_apk()
     if not path:
         return {"available": False}
     st = path.stat()
+    version_name, version_code = _apk_version(path)
+    label = version_name or ""
+    if version_code is not None:
+        label = f"{label} ({version_code})".strip() if label else f"({version_code})"
     return {
         "available": True,
         "filename": path.name,
@@ -898,6 +987,9 @@ def _apk_info() -> dict[str, Any]:
         ),
         "source": "releases" if path in (APK_PUBLISHED, APK_PUBLISHED_DEBUG) else "gradle-debug",
         "downloadPath": "/download/grok-remote.apk",
+        "versionName": version_name,
+        "versionCode": version_code,
+        "versionLabel": label or None,
     }
 
 
@@ -925,7 +1017,16 @@ def _download_page_html(request: Request) -> HTMLResponse:
         <pre>powershell -ExecutionPolicy Bypass -File .\\scripts\\publish-apk.ps1</pre>
         """
     else:
+        ver = html.escape(str(info.get("versionName") or ""))
+        ver_line = (
+            f'<p class="ver">Version <strong>{ver}</strong>'
+            + (f' <span class="build">build {info["versionCode"]}</span>' if info.get("versionCode") is not None else "")
+            + "</p>"
+            if ver
+            else ""
+        )
         body = f"""
+        {ver_line}
         <p>Install / update the native app without USB.</p>
         <p class="meta">
           <strong>{info['sizeMB']} MB</strong>
@@ -941,7 +1042,7 @@ def _download_page_html(request: Request) -> HTMLResponse:
         </ol>
         <p class="hint">Direct link:<br/><code>{apk_display}</code></p>
         """
-    html = f"""<!DOCTYPE html>
+    page = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -959,6 +1060,9 @@ def _download_page_html(request: Request) -> HTMLResponse:
     }}
     h1 {{ margin: 0 0 .5rem; font-size: 1.35rem; }}
     p, li {{ color: #8b9bb8; line-height: 1.45; }}
+    .ver {{ color: #e8eefc !important; font-size: 1.05rem; margin: 0 0 .75rem; }}
+    .ver strong {{ font-size: 1.15rem; }}
+    .build {{ color: #8b9bb8; font-size: .85rem; font-weight: 500; }}
     .meta {{ color: #c5d4f5 !important; }}
     .warn {{ color: #f0c14b !important; }}
     .btn {{
@@ -987,7 +1091,7 @@ def _download_page_html(request: Request) -> HTMLResponse:
 </body>
 </html>"""
     return HTMLResponse(
-        html,
+        page,
         headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
     )
 

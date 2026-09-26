@@ -8,6 +8,22 @@ irm https://github.com/ericleigh007/grok-remote/releases/latest/download/install
 
 (`pwsh`, not Windows PowerShell 5.1.)
 
+## Phone mic + settings
+
+The Android mic **keeps listening across pauses** and stitches the chunks. Recoverable STT errors (timeout, no-match, busy) restart silently instead of a banner.
+
+**Settings** (gear on the top bar) can turn that back off if it misbehaves:
+
+- Allow pauses while speaking (off = old one-shot that cuts on silence)
+- Auto-send when you finish (off = leave the transcript in the box)
+- Hold your place when you scroll up
+
+`/dl` shows the APK **version** (and build number) of the file it serves.
+
+## Sessions after reboot
+
+S4U was launching grok and the bridge with `C:\Users\Default` as the profile, so the phone saw an empty session list and `Authentication required`. Children now get the installing user's `%USERPROFILE%` / `GROK_HOME`. Prefer an interactive session token when you are logged on.
+
 ## Windows-native app (tablets, including ARM)
 
 Leave the grok-main PC at home. On a weekend — or from the other side of the Mediterranean — open **Grok Remote** on a Windows tablet over Tailscale and keep the same sessions going.

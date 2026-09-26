@@ -42,6 +42,26 @@ class Prefs(context: Context) {
         get() = prefs.getString(KEY_LAST_SESSION, "") ?: ""
         set(v) = prefs.edit().putString(KEY_LAST_SESSION, v).apply()
 
+    /** Keep the mic open across pauses. Off = old one-shot that cuts on silence. */
+    var pauseTolerantStt: Boolean
+        get() = prefs.getBoolean(KEY_PAUSE_TOLERANT_STT, true)
+        set(v) = prefs.edit().putBoolean(KEY_PAUSE_TOLERANT_STT, v).apply()
+
+    /** Send the transcript when a listen session ends. Off = leave it in the composer. */
+    var autoSendVoice: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_SEND_VOICE, true)
+        set(v) = prefs.edit().putBoolean(KEY_AUTO_SEND_VOICE, v).apply()
+
+    /** Stay put if you scroll up during a long reply. Off = always jump to latest. */
+    var holdScroll: Boolean
+        get() = prefs.getBoolean(KEY_HOLD_SCROLL, true)
+        set(v) = prefs.edit().putBoolean(KEY_HOLD_SCROLL, v).apply()
+
+    /** Silence after last words before auto-send. 0 = tap mic only. */
+    var voiceIdleSendMs: Long
+        get() = prefs.getLong(KEY_VOICE_IDLE_SEND_MS, 5_000L)
+        set(v) = prefs.edit().putLong(KEY_VOICE_IDLE_SEND_MS, v).apply()
+
     fun clearPairing() {
         prefs.edit().remove(KEY_BASE).remove(KEY_TOKEN).apply()
     }
@@ -55,5 +75,9 @@ class Prefs(context: Context) {
         private const val KEY_TTS_VOICE = "tts_voice"
         private const val KEY_THINKING_SOUND = "thinking_sound"
         private const val KEY_LAST_SESSION = "last_session"
+        private const val KEY_PAUSE_TOLERANT_STT = "pause_tolerant_stt"
+        private const val KEY_AUTO_SEND_VOICE = "auto_send_voice"
+        private const val KEY_HOLD_SCROLL = "hold_scroll"
+        private const val KEY_VOICE_IDLE_SEND_MS = "voice_idle_send_ms"
     }
 }

@@ -3,9 +3,16 @@ package com.xai.grokremote.ui
 import android.Manifest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
@@ -63,8 +70,16 @@ fun GrokRemoteRoot(
         modifier = Modifier
             .fillMaxSize()
             .background(Bg),
+        contentWindowInsets = WindowInsets.safeDrawing.only(
+            WindowInsetsSides.Horizontal + WindowInsetsSides.Top,
+        ),
         snackbarHost = {
-            SnackbarHost(snack) { data ->
+            SnackbarHost(
+                snack,
+                modifier = Modifier.windowInsetsPadding(
+                    WindowInsets.navigationBars.union(WindowInsets.ime),
+                ),
+            ) { data ->
                 Snackbar(
                     action = {
                         TextButton(onClick = { data.dismiss() }) { Text("OK") }
@@ -77,7 +92,7 @@ fun GrokRemoteRoot(
         Box(
             Modifier
                 .padding(padding)
-                .imePadding()
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                 .fillMaxSize(),
         ) {
             if (state.needsPairing) {

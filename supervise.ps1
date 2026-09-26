@@ -59,6 +59,7 @@ $env:USERPROFILE = $userProfile
 $env:HOME = $userProfile
 $env:APPDATA = Join-Path $userProfile "AppData\Roaming"
 $env:LOCALAPPDATA = Join-Path $userProfile "AppData\Local"
+$env:GROK_HOME = Join-Path $userProfile ".grok"
 $env:GROK_DISABLE_AUTOUPDATER = "1"
 $env:PYTHONUNBUFFERED = "1"
 $env:Path = "$(Join-Path $userProfile '.grok\bin');$env:Path"
@@ -154,17 +155,51 @@ function Start-LoggedProcess([string]$File, [string]$Arguments, [string]$WorkDir
   return $p
 }
 
+function Wrap-ProfileCommand([string]$File, [string]$Arguments) {
+  # S4U CreateEnvironmentBlock often points at C:\Users\Default. Force the
+  # installing user's hive so grok sees auth.json and ~/.grok/sessions.
+  $grokHome = Join-Path $userProfile ".grok"
+  $sets = @(
+    "set `"USERPROFILE=$userProfile`"",
+    "set `"HOME=$userProfile`"",
+    "set `"GROK_HOME=$grokHome`"",
+    "set `"APPDATA=$(Join-Path $userProfile 'AppData\Roaming')`"",
+    "set `"LOCALAPPDATA=$(Join-Path $userProfile 'AppData\Local')`"",
+    "set `"USERNAME=$($script:UserName)`"",
+    "set `"USERDOMAIN=$($script:UserDomain)`"",
+    "set `"Path=$(Join-Path $grokHome 'bin');%Path%`""
+  ) -join " && "
+  $inner = if ([string]::IsNullOrWhiteSpace($Arguments)) { "`"$File`"" } else { "`"$File`" $Arguments" }
+  $comspec = $env:ComSpec
+  if (-not $comspec) { $comspec = "C:\Windows\System32\cmd.exe" }
+  return [pscustomobject]@{
+    File      = $comspec
+    Arguments = "/s /c `"$sets && $inner`""
+  }
+}
+
 function Start-AsInstalledUser([string]$File, [string]$Arguments, [string]$WorkDir, [string]$OutLog, [string]$ErrLog) {
+  $launch = Wrap-ProfileCommand $File $Arguments
   if (-not $script:AsSystem) {
-    return Start-LoggedProcess $File $Arguments $WorkDir $OutLog $ErrLog
+    return Start-LoggedProcess $launch.File $launch.Arguments $WorkDir $OutLog $ErrLog
   }
   $tok = [GrokRemote.UserProcess]::AcquireToken($script:UserDomain, $script:UserName, $script:UserSid)
   if ($tok -eq [IntPtr]::Zero) {
     throw "No token for $($script:UserDomain)\$($script:UserName): $([GrokRemote.UserProcess]::LastError)"
   }
   try {
-    $id = [GrokRemote.UserProcess]::Start($tok, $File, $Arguments, $WorkDir, $OutLog, $ErrLog)
-    Write-Life "CreateProcessAsUser pid=$id via $([GrokRemote.UserProcess]::LastError)"
+    $start = [GrokRemote.UserProcess].GetMethods() | Where-Object {
+      $_.Name -eq "Start" -and $_.GetParameters().Count -ge 9
+    } | Select-Object -First 1
+    if ($start) {
+      $id = $start.Invoke($null, @(
+        $tok, $launch.File, $launch.Arguments, $WorkDir, $OutLog, $ErrLog,
+        $userProfile, $script:UserName, $script:UserDomain
+      ))
+    } else {
+      $id = [GrokRemote.UserProcess]::Start($tok, $launch.File, $launch.Arguments, $WorkDir, $OutLog, $ErrLog)
+    }
+    Write-Life "CreateProcessAsUser pid=$id via $([GrokRemote.UserProcess]::LastError) profile=$userProfile"
     return Get-Process -Id $id
   } finally {
     [GrokRemote.UserProcess]::CloseToken($tok)

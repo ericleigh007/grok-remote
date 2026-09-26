@@ -112,6 +112,11 @@ data class UiState(
     val sessionQuery: String = "",
     val catalogQuery: String = "",
     val searchingSessions: Boolean = false,
+    val showSettings: Boolean = false,
+    val pauseTolerantStt: Boolean = true,
+    val autoSendVoice: Boolean = true,
+    val holdScroll: Boolean = true,
+    val voiceIdleSendMs: Long = 5_000L,
 ) {
     val active: SessionState?
         get() = activeSessionId?.let { sessions[it] }

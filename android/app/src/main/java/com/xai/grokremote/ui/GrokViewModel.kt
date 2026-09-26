@@ -34,6 +34,10 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
             ttsEnabled = prefs.ttsEnabled,
             thinkingSoundEnabled = prefs.thinkingSoundEnabled,
             selectedVoiceName = prefs.ttsVoiceName.ifBlank { null },
+            pauseTolerantStt = prefs.pauseTolerantStt,
+            autoSendVoice = prefs.autoSendVoice,
+            holdScroll = prefs.holdScroll,
+            voiceIdleSendMs = prefs.voiceIdleSendMs,
         ),
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -59,14 +63,17 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
+        speech.pauseTolerant = prefs.pauseTolerantStt
+        speech.idleSendMs = prefs.voiceIdleSendMs
         speech.initTts(prefs.ttsVoiceName.ifBlank { null })
         speech.onPartial = { partial ->
             _state.update { it.copy(draft = partial) }
         }
         speech.onFinal = { text ->
             _state.update { it.copy(draft = text, listening = false) }
-            // Auto-send on final like web mic
-            send(interruptIfBusy = true)
+            if (prefs.autoSendVoice) {
+                send(interruptIfBusy = true)
+            }
         }
         speech.onListeningChanged = { listening ->
             _state.update { it.copy(listening = listening) }
@@ -280,6 +287,7 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
         val text = st.draft.trim()
         if (text.isEmpty()) return
         val session = st.sessions[sid] ?: return
+        speech.abortListening()
         speech.stopSpeaking()
         stopThinkingCue()
         _state.update { it.copy(draft = "") }
@@ -402,8 +410,41 @@ class GrokViewModel(app: Application) : AndroidViewModel(app) {
             speech.stopListening()
         } else {
             speech.stopSpeaking()
+            speech.pauseTolerant = prefs.pauseTolerantStt
+            speech.idleSendMs = prefs.voiceIdleSendMs
             speech.startListening()
         }
+    }
+
+    fun openSettings() {
+        _state.update { it.copy(showSettings = true) }
+    }
+
+    fun dismissSettings() {
+        _state.update { it.copy(showSettings = false) }
+    }
+
+    fun setPauseTolerantStt(enabled: Boolean) {
+        prefs.pauseTolerantStt = enabled
+        speech.pauseTolerant = enabled
+        if (_state.value.listening) speech.abortListening()
+        _state.update { it.copy(pauseTolerantStt = enabled) }
+    }
+
+    fun setAutoSendVoice(enabled: Boolean) {
+        prefs.autoSendVoice = enabled
+        _state.update { it.copy(autoSendVoice = enabled) }
+    }
+
+    fun setHoldScroll(enabled: Boolean) {
+        prefs.holdScroll = enabled
+        _state.update { it.copy(holdScroll = enabled) }
+    }
+
+    fun setVoiceIdleSendMs(ms: Long) {
+        prefs.voiceIdleSendMs = ms
+        speech.idleSendMs = ms
+        _state.update { it.copy(voiceIdleSendMs = ms) }
     }
 
     fun unpair() {

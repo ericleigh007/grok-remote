@@ -75,7 +75,7 @@ Token is stored in EncryptedSharedPreferences.
 | Thinking | Collapsible live thought stream |
 | Tools | Tool cards with status |
 | Markdown | Markwon (GFM tables, code, links) |
-| STT | Android `SpeechRecognizer` (on-device / Google) |
+| STT | Android `SpeechRecognizer`; pause-tolerant by default (Settings can revert) |
 | TTS | System `TextToSpeech` (prefer neural voices) |
 | Cancel | Cancel turn while busy |
 | Midstream | **Send while busy** = cancel + new prompt |

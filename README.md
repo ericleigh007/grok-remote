@@ -18,6 +18,7 @@ Newest first. Tagged **[Releases](https://github.com/ericleigh007/grok-remote/re
 
 | When | What actually changed |
 |------|------------------------|
+| **v0.5.1** | Phone **mic keeps listening across pauses** (the old one-shot cut off unless you spoke in one breath). Recoverable STT errors no longer flash banners. **Settings** (gear) can turn the new mic, auto-send, and scroll-hold back off. `/dl` shows the APK version. After boot, grok + the bridge use your real user profile so the session list and xAI login work (S4U was landing in `C:\Users\Default`). |
 | **v0.5.0** | **Windows-native app** (WinUI 3 + WebView2) for tablets and laptops — including **ARM64**. Same Tailscale session as the phone, but **Windows Natural voices** (WinRT), not browser `speechSynthesis`. Take a Snapdragon tablet on a weekend; the grok-main PC stays home. Prebuilt `grok-remote-desktop-win-arm64.zip` / `win-x64.zip` on the release. |
 | **v0.4.2** | **Exit session** from the remote tab list (× on the chip). Unloads that thread from the phone and the live bridge — disk stays, picker can re-enter. Leaving the active session returns to the session picker. |
 | **v0.4.1** | **Hold your place** while thinking (or a long reply) streams: the list no longer jumps to the top of the bubble after you scroll. A small **Latest** down-arrow appears when you are not at the end; tap it to pin to the newest line again. |

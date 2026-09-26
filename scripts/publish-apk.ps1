@@ -45,8 +45,26 @@ New-Item -ItemType Directory -Force -Path $Releases | Out-Null
 Copy-Item $ApkSrc $ApkDst -Force
 Copy-Item $ApkSrc $ApkReleaseName -Force
 $item = Get-Item $ApkDst
+$versionName = $null
+$versionCode = $null
+$gradle = Join-Path $Android "app\build.gradle.kts"
+if (Test-Path $gradle) {
+  $g = Get-Content $gradle -Raw
+  if ($g -match 'versionName\s*=\s*"([^"]+)"') { $versionName = $Matches[1] }
+  if ($g -match 'versionCode\s*=\s*(\d+)') { $versionCode = [int]$Matches[1] }
+}
+$aapt = Get-ChildItem (Join-Path $env:ANDROID_HOME "build-tools") -Recurse -Filter aapt.exe -ErrorAction SilentlyContinue |
+  Sort-Object FullName -Descending | Select-Object -First 1
+if ($aapt) {
+  $badge = & $aapt.FullName dump badging $ApkDst 2>$null | Select-Object -First 1
+  if ($badge -match "versionName='([^']+)'") { $versionName = $Matches[1] }
+  if ($badge -match "versionCode='(\d+)'") { $versionCode = [int]$Matches[1] }
+}
+if ($versionName -and $versionName -notmatch '-debug$' ) { $versionName = "$versionName-debug" }
 $metaObj = [ordered]@{
   filename     = $item.Name
+  versionName  = $versionName
+  versionCode  = $versionCode
   sizeBytes    = $item.Length
   sizeMB       = [math]::Round($item.Length / 1MB, 1)
   modifiedIso  = $item.LastWriteTime.ToString("o")

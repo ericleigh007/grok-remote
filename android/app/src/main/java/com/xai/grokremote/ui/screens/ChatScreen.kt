@@ -8,13 +8,16 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -51,6 +54,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -108,7 +112,7 @@ import com.xai.grokremote.ui.theme.ToolBg
 import com.xai.grokremote.ui.theme.UserBubble
 import com.xai.grokremote.ui.theme.Warn
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ChatScreen(state: UiState, vm: GrokViewModel) {
     val listState = rememberLazyListState()
@@ -123,7 +127,11 @@ fun ChatScreen(state: UiState, vm: GrokViewModel) {
     }
     val itemCount = active?.items?.size ?: 0
 
-    LaunchedEffect(listState) {
+    LaunchedEffect(listState, state.holdScroll) {
+        if (!state.holdScroll) {
+            followLatest = true
+            return@LaunchedEffect
+        }
         snapshotFlow { listState.isScrollInProgress to listState.nearBottom() }
             .collect { (inProgress, near) ->
                 if (pin.active) return@collect
@@ -145,15 +153,18 @@ fun ChatScreen(state: UiState, vm: GrokViewModel) {
         }
     }
 
+    val imeVisible = WindowInsets.isImeVisible
     Column(
         Modifier
             .fillMaxSize()
             .background(Bg),
     ) {
-        TopBar(state, vm)
-        SessionTabs(state, vm)
-        StatusStrip(state)
-        HorizontalDivider(color = Panel2.copy(alpha = 0.8f), thickness = 1.dp)
+        TopBar(state, vm, compact = imeVisible)
+        if (!imeVisible) {
+            SessionTabs(state, vm)
+            StatusStrip(state)
+            HorizontalDivider(color = Panel2.copy(alpha = 0.8f), thickness = 1.dp)
+        }
         val showPicker = state.showSessionPicker || (active == null && !state.openingSession)
         if (showPicker) {
             SessionPicker(state, vm, Modifier.weight(1f))
@@ -211,6 +222,13 @@ fun ChatScreen(state: UiState, vm: GrokViewModel) {
         }
     }
 
+    if (state.showSettings) {
+        SettingsSheet(
+            state = state,
+            vm = vm,
+            onDismiss = { vm.dismissSettings() },
+        )
+    }
     if (state.showVoicePicker) {
         VoicePickerSheet(
             voices = state.ttsVoices,
@@ -222,6 +240,7 @@ fun ChatScreen(state: UiState, vm: GrokViewModel) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SessionPicker(state: UiState, vm: GrokViewModel, modifier: Modifier = Modifier) {
     val q = state.sessionQuery.trim()
@@ -230,67 +249,22 @@ private fun SessionPicker(state: UiState, vm: GrokViewModel, modifier: Modifier 
     } else {
         state.availableSessions.filter { it.matchesQuery(q) }
     }
+    val imeVisible = WindowInsets.isImeVisible
     Column(
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Re-enter a session", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-        Text(
-            "Search titles, folders, and transcripts. Only the session you open is loaded.",
-            color = Muted,
-            fontSize = 13.sp,
-        )
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(46.dp)
-                .background(Panel2, RoundedCornerShape(12.dp))
-                .border(1.dp, Panel2, RoundedCornerShape(12.dp))
-                .padding(start = 12.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Default.Search,
-                contentDescription = null,
-                tint = Muted,
-                modifier = Modifier.size(18.dp),
+        if (!imeVisible) {
+            Text("Re-enter a session", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text(
+                "Search titles, folders, and transcripts. Only the session you open is loaded.",
+                color = Muted,
+                fontSize = 13.sp,
             )
-            BasicTextField(
-                value = state.sessionQuery,
-                onValueChange = { vm.setSessionQuery(it) },
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 10.dp, vertical = 12.dp),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary),
-                cursorBrush = SolidColor(Accent),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(
-                    onSearch = { vm.setSessionQuery(state.sessionQuery, immediate = true) },
-                ),
-                decorationBox = { inner ->
-                    if (state.sessionQuery.isEmpty()) {
-                        Text("Search sessions…", color = Muted, fontSize = 14.sp)
-                    }
-                    inner()
-                },
-            )
-            if (state.searchingSessions) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .padding(end = 8.dp)
-                        .size(16.dp),
-                    color = Accent,
-                    strokeWidth = 2.dp,
-                )
-            } else if (state.sessionQuery.isNotEmpty()) {
-                IconButton(onClick = { vm.setSessionQuery("") }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.Close, contentDescription = "Clear search", tint = Muted)
-                }
-            }
         }
+        SessionSearchField(state, vm)
         val status = when {
             q.isNotEmpty() && state.searchingSessions -> "Searching…"
             q.isNotEmpty() && rows.isEmpty() -> "No sessions match “$q”"
@@ -354,6 +328,59 @@ private fun SessionPicker(state: UiState, vm: GrokViewModel, modifier: Modifier 
     }
 }
 
+@Composable
+private fun SessionSearchField(state: UiState, vm: GrokViewModel) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(46.dp)
+            .background(Panel2, RoundedCornerShape(12.dp))
+            .border(1.dp, Panel2, RoundedCornerShape(12.dp))
+            .padding(start = 12.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Default.Search,
+            contentDescription = null,
+            tint = Muted,
+            modifier = Modifier.size(18.dp),
+        )
+        BasicTextField(
+            value = state.sessionQuery,
+            onValueChange = { vm.setSessionQuery(it) },
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 10.dp, vertical = 12.dp),
+            textStyle = MaterialTheme.typography.bodyMedium.copy(color = TextPrimary),
+            cursorBrush = SolidColor(Accent),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(
+                onSearch = { vm.setSessionQuery(state.sessionQuery, immediate = true) },
+            ),
+            decorationBox = { inner ->
+                if (state.sessionQuery.isEmpty()) {
+                    Text("Search sessions…", color = Muted, fontSize = 14.sp)
+                }
+                inner()
+            },
+        )
+        if (state.searchingSessions) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .padding(end = 8.dp)
+                    .size(16.dp),
+                color = Accent,
+                strokeWidth = 2.dp,
+            )
+        } else if (state.sessionQuery.isNotEmpty()) {
+            IconButton(onClick = { vm.setSessionQuery("") }, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.Close, contentDescription = "Clear search", tint = Muted)
+            }
+        }
+    }
+}
+
 private fun AvailableSession.matchesQuery(q: String): Boolean {
     if (q.isBlank()) return true
     return title.contains(q, ignoreCase = true) ||
@@ -412,13 +439,37 @@ private fun EmptyState() {
 }
 
 @Composable
-private fun TopBar(state: UiState, vm: GrokViewModel) {
+private fun TopBar(state: UiState, vm: GrokViewModel, compact: Boolean = false) {
     Column(
         Modifier
             .fillMaxWidth()
             .background(Panel)
             .padding(start = 14.dp, end = 6.dp, top = 10.dp, bottom = 6.dp),
     ) {
+        if (compact) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Grok Remote",
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary,
+                    fontSize = 16.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    softWrap = false,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    state.connDetail.ifBlank { "…" },
+                    color = Muted,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        } else {
         Text(
             "Grok Remote",
             fontWeight = FontWeight.SemiBold,
@@ -523,9 +574,13 @@ private fun TopBar(state: UiState, vm: GrokViewModel) {
             IconButton(onClick = { vm.newSession() }, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Default.Add, contentDescription = "New session", tint = TextPrimary)
             }
+            IconButton(onClick = { vm.openSettings() }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Settings, contentDescription = "Settings", tint = TextPrimary)
+            }
             IconButton(onClick = { vm.unpair() }, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Default.LinkOff, contentDescription = "Unpair", tint = Muted)
             }
+        }
         }
     }
 }
@@ -796,6 +851,23 @@ private fun Composer(state: UiState, vm: GrokViewModel) {
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
+            if (state.listening) {
+                Text(
+                    if (state.pauseTolerantStt) {
+                        val sec = (state.voiceIdleSendMs / 1000L).toInt()
+                        if (state.autoSendVoice && sec > 0) {
+                            "Listening — pauses are fine. Sends ${sec}s after the last words, or tap the mic."
+                        } else {
+                            "Listening — pauses are fine. Tap the mic when you're done."
+                        }
+                    } else {
+                        "Listening — keep talking; a pause will stop the mic."
+                    },
+                    color = Muted,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
             if (busy) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -839,7 +911,7 @@ private fun Composer(state: UiState, vm: GrokViewModel) {
                 ) {
                     Icon(
                         if (state.listening) Icons.Default.MicOff else Icons.Default.Mic,
-                        contentDescription = "Mic",
+                        contentDescription = if (state.listening) "Stop listening" else "Mic",
                         tint = TextPrimary,
                     )
                 }
@@ -857,7 +929,11 @@ private fun Composer(state: UiState, vm: GrokViewModel) {
                     decorationBox = { inner ->
                         if (state.draft.isEmpty()) {
                             Text(
-                                if (busy) "Inject new instruction…" else "Message Grok…",
+                                when {
+                                    state.listening -> "Speak…"
+                                    busy -> "Inject new instruction…"
+                                    else -> "Message Grok…"
+                                },
                                 color = Muted,
                             )
                         }
